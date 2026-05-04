@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Test Pipeline</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Test du Pipeline RAG</h2>
+  <div id="msg" class="message"></div>
+  <p>Testez le pipeline complet : recherche, reranking, augmentation, LLM. Chaque etape est detaillee.</p>
+  <form id="test-form">
+    <label for="query">Question de test</label>
+    <input type="text" id="query" required placeholder="Ex: Quels documents faut-il pour renouveler une carte d'identite ?">
+    <button type="submit" id="test-btn">Lancer le test</button>
+  </form>
+  <div id="results" style="margin-top:1.5rem;"></div>
+  <script src="/admin/app.js"></script>
+  <script>
+    (async function() {
+      await checkAuth();
+      buildNav('test');
+    })();
+
+    var stepNames = {
+      search: 'Recherche semantique',
+      rerank: 'Reranking',
+      augmentation: 'Augmentation du prompt',
+      llm: 'Reponse LLM'
+    };
+
+    function renderStep(step) {
+      var statusClass = step.status === 'ok' ? 'ok' : step.status === 'skipped' ? 'unknown' : 'error';
+      var div = createEl('div', { className: 'pipeline-step' });
+      div.appendChild(createEl('h4', {}, [
+        document.createTextNode((stepNames[step.step] || step.step) + ' '),
+        createEl('span', { className: 'status-badge ' + statusClass, textContent: step.status }),
+      ]));
+
+      if (step.step === 'search') {
+        div.appendChild(createEl('p', { textContent: 'Resultats bruts : ' + (step.resultCount || 0) + ' | Apres filtre score : ' + (step.afterFilter || 0) }));
+        if (step.results && step.results.length) {
+          var preview = step.results.map(function(r) {
+            return { score: r.score ? r.score.toFixed(3) : '?', content: ((r.chunk && r.chunk.content) || '').slice(0, 150) + '...' };
+          });
+          div.appendChild(createEl('pre', { textContent: JSON.stringify(preview, null, 2) }));
+        }
+      } else if (step.step === 'rerank') {
+        if (step.status === 'skipped') {
+          div.appendChild(createEl('p', { textContent: 'Reranking desactive dans la configuration.' }));
+        } else {
+          div.appendChild(createEl('p', { textContent: 'Resultats rerankes : ' + (step.resultCount || 0) }));
+          if (step.results && step.results.length) {
+            var preview = step.results.map(function(r) {
+              return { score: r.score ? r.score.toFixed(3) : '?', content: ((r.chunk && r.chunk.content) || '').slice(0, 150) + '...' };
+            });
+            div.appendChild(createEl('pre', { textContent: JSON.stringify(preview, null, 2) }));
+          }
+        }
+      } else if (step.step === 'augmentation') {
+        div.appendChild(createEl('p', { textContent: 'Chunks injectes : ' + step.contextChunks + ' | Taille prompt systeme : ' + step.systemPromptLength + ' chars' }));
+      } else if (step.step === 'llm') {
+        if (step.response) {
+          var pre = createEl('pre', { textContent: step.response });
+          pre.style.whiteSpace = 'pre-wrap';
+          div.appendChild(pre);
+        } else {
+          div.appendChild(createEl('p', { textContent: 'Erreur : ' + (step.error || 'inconnue') }));
+        }
+      }
+
+      if (step.error && step.step !== 'llm') {
+        div.appendChild(createEl('p', {}, [
+          createEl('strong', { textContent: 'Erreur : ' }),
+          document.createTextNode(step.error),
+        ]));
+      }
+
+      return div;
+    }
+
+    document.getElementById('test-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var query = document.getElementById('query').value;
+      var btn = document.getElementById('test-btn');
+      var container = document.getElementById('results');
+      btn.disabled = true;
+      btn.textContent = 'Test en cours...';
+      clearEl(container);
+      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Execution du pipeline...' }));
+      var result = await apiPost('/admin/test-pipeline', { query: query });
+      btn.disabled = false;
+      btn.textContent = 'Lancer le test';
+      clearEl(container);
+      if (!result || !result.steps) {
+        container.appendChild(createEl('p', { textContent: 'Erreur lors du test.' }));
+        return;
+      }
+      container.appendChild(createEl('h3', { textContent: 'Resultats pour : "' + result.query + '"' }));
+      result.steps.forEach(function(step) {
+        container.appendChild(renderStep(step));
+      });
+    });
+  </script>
+</body>
+</html>

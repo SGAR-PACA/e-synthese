@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.mastra/
+.env
+*.log
+config.local.json
+data.db
+data.db-wal
+data.db-shm
+**/data.db
+**/data.db-wal
+**/data.db-shm

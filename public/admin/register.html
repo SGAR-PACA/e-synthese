@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Inscription</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <div class="login-container">
+    <h2>Inscription</h2>
+    <p>Creez votre compte avec votre code d'invitation.</p>
+    <div id="msg" class="message"></div>
+
+    <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
+      <strong>Code de recuperation</strong>
+      <p>Notez ce code precieusement, il ne sera plus jamais affiche.</p>
+      <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
+    </div>
+
+    <form id="form">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required placeholder="votre@email.com">
+
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" name="password" required minlength="8" placeholder="Mot de passe">
+
+      <label for="password2">Confirmer le mot de passe</label>
+      <input type="password" id="password2" name="password2" required minlength="8" placeholder="Confirmer">
+
+      <label for="invite-code">Code d'invitation</label>
+      <input type="text" id="invite-code" name="invite-code" required placeholder="Code d'invitation">
+
+      <button type="submit" id="submit-btn">Creer mon compte</button>
+    </form>
+
+    <p id="login-link" style="display:none; margin-top:1rem; text-align:center;">
+      <a href="/admin/login">Retour a la connexion</a>
+    </p>
+  </div>
+  <script src="/admin/app.js"></script>
+  <script>
+    (function() {
+      var params = new URLSearchParams(location.search);
+      var code = params.get('code');
+      if (code) {
+        document.getElementById('invite-code').value = code;
+      }
+    })();
+
+    document.getElementById('form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var email = document.getElementById('email').value;
+      var password = document.getElementById('password').value;
+      var password2 = document.getElementById('password2').value;
+      var inviteCode = document.getElementById('invite-code').value;
+
+      var pwError = validatePasswordClient(password);
+      if (pwError) {
+        showMessage('msg', pwError, true);
+        return;
+      }
+
+      if (password !== password2) {
+        showMessage('msg', 'Les mots de passe ne correspondent pas.', true);
+        return;
+      }
+
+      var res = await fetch('/admin/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password, inviteCode: inviteCode })
+      });
+      var data = await res.json();
+
+      if (data.ok) {
+        document.getElementById('form').style.display = 'none';
+        if (data.recoveryCode) {
+          document.getElementById('recovery-code').textContent = data.recoveryCode;
+          document.getElementById('recovery-box').style.display = 'block';
+        }
+        showMessage('msg', 'Compte cree avec succes.', false);
+        document.getElementById('login-link').style.display = 'block';
+      } else {
+        showMessage('msg', data.error || 'Erreur lors de l\'inscription', true);
+      }
+    });
+  </script>
+</body>
+</html>

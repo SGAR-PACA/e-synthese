@@ -1,0 +1,103 @@
+:root {
+  --admin-primary: #1095c1;
+}
+
+body {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+nav .brand {
+  font-weight: bold;
+  font-size: 1.1rem;
+  margin-right: auto;
+}
+
+nav a {
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+nav a.active {
+  font-weight: bold;
+  text-decoration: underline;
+}
+
+.message {
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  display: none;
+}
+
+.message.error {
+  background: #fee;
+  color: #c00;
+  border: 1px solid #fcc;
+}
+
+.message.success {
+  background: #efe;
+  color: #060;
+  border: 1px solid #cfc;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.status-badge.ok { background: #d4edda; color: #155724; }
+.status-badge.error { background: #f8d7da; color: #721c24; }
+.status-badge.unknown { background: #fff3cd; color: #856404; }
+
+.pipeline-step {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.pipeline-step h4 {
+  margin-top: 0;
+}
+
+.pipeline-step pre {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+}
+
+.collection-card {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.collection-card.active {
+  border-color: var(--admin-primary);
+  background: rgba(16, 149, 193, 0.05);
+}
+
+.login-container {
+  max-width: 400px;
+  margin: 4rem auto;
+}

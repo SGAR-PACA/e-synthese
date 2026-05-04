@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Dashboard</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Dashboard</h2>
+  <div id="msg" class="message"></div>
+
+  <!-- Admin view -->
+  <div id="admin-view" style="display:none;">
+    <div class="grid">
+      <article>
+        <header>API Albert</header>
+        <p>Statut : <span id="albert-status" class="status-badge unknown">...</span></p>
+        <p>Cle API : <code id="api-key">...</code></p>
+      </article>
+      <article>
+        <header>Configuration RAG</header>
+        <p>Modele LLM : <code id="llm-model">...</code></p>
+        <p>Collections actives : <code id="active-collections">...</code></p>
+      </article>
+    </div>
+    <div class="grid">
+      <article>
+        <header>Parametres Recherche</header>
+        <p>Top K : <code id="search-k">...</code></p>
+        <p>Score minimum : <code id="min-score">...</code></p>
+        <p>Reranking : <code id="rerank">...</code></p>
+      </article>
+      <article>
+        <header>Modeles disponibles</header>
+        <ul id="models-list"><li>Chargement...</li></ul>
+      </article>
+    </div>
+    <h3>Derniere activite</h3>
+    <table role="grid">
+      <thead><tr><th>Date</th><th>Action</th><th>Utilisateur</th><th>IP</th><th>Details</th></tr></thead>
+      <tbody id="audit-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Editor view -->
+  <div id="editor-view" style="display:none;">
+    <article>
+      <header>Mes collections</header>
+      <ul id="editor-collections"><li>Chargement...</li></ul>
+    </article>
+    <div class="grid">
+      <a href="/admin/documents" role="button" class="outline">Documents</a>
+      <a href="/admin/test" role="button" class="outline">Test Pipeline</a>
+    </div>
+  </div>
+
+  <script src="/admin/app.js"></script>
+  <script>
+    (async function() {
+      await checkAuth();
+      buildNav('dashboard');
+
+      if (currentUser && currentUser.role === 'admin') {
+        document.getElementById('admin-view').style.display = 'block';
+        loadAdminDashboard();
+      } else {
+        document.getElementById('editor-view').style.display = 'block';
+        loadEditorDashboard();
+      }
+    })();
+
+    async function loadAdminDashboard() {
+      var status = await apiGet('/admin/status');
+      if (status) {
+        var statusEl = document.getElementById('albert-status');
+        statusEl.textContent = status.albertStatus;
+        statusEl.className = 'status-badge ' + (status.albertStatus === 'connected' ? 'ok' : 'error');
+        document.getElementById('llm-model').textContent = status.llmModel;
+        document.getElementById('active-collections').textContent = status.activeCollections.length ? status.activeCollections.join(', ') : 'Aucune';
+        document.getElementById('search-k').textContent = String(status.searchK);
+        document.getElementById('min-score').textContent = String(status.minScore);
+        document.getElementById('rerank').textContent = status.useRerank ? 'Actif' : 'Inactif';
+        var modelsList = document.getElementById('models-list');
+        clearEl(modelsList);
+        if (status.albertModels && status.albertModels.length) {
+          status.albertModels.forEach(function(m) {
+            modelsList.appendChild(createEl('li', {}, [createEl('code', { textContent: m })]));
+          });
+        } else {
+          modelsList.appendChild(createEl('li', { textContent: 'Aucun modele recupere' }));
+        }
+      }
+
+      var config = await apiGet('/admin/config');
+      if (config) {
+        document.getElementById('api-key').textContent = config.albertApiKey || 'Non configuree';
+      }
+
+      var audit = await apiGet('/admin/audit?limit=10');
+      var auditBody = document.getElementById('audit-body');
+      clearEl(auditBody);
+      if (audit && audit.length) {
+        audit.forEach(function(e) {
+          auditBody.appendChild(createEl('tr', {}, [
+            createEl('td', { textContent: new Date(e.timestamp).toLocaleString('fr') }),
+            createEl('td', { textContent: e.action }),
+            createEl('td', { textContent: e.user_email || '-' }),
+            createEl('td', { textContent: e.ip }),
+            createEl('td', { textContent: e.details || '-' }),
+          ]));
+        });
+      } else {
+        auditBody.appendChild(createEl('tr', {}, [createEl('td', { colspan: '5', textContent: 'Aucune activite' })]));
+      }
+    }
+
+    async function loadEditorDashboard() {
+      var me = await apiGet('/admin/me');
+      var list = document.getElementById('editor-collections');
+      clearEl(list);
+      if (me && me.collections && me.collections.length) {
+        me.collections.forEach(function(col) {
+          list.appendChild(createEl('li', { textContent: col }));
+        });
+      } else {
+        list.appendChild(createEl('li', { textContent: 'Aucune collection assignee' }));
+      }
+    }
+  </script>
+</body>
+</html>
