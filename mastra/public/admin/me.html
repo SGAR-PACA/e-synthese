@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Mon compte</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Mon compte</h2>
+  <div id="msg" class="message"></div>
+
+  <section id="account-info"></section>
+
+  <hr>
+
+  <h3>Changer le mot de passe</h3>
+  <form id="password-form">
+    <label for="current-password">Mot de passe actuel</label>
+    <input type="password" id="current-password" required>
+    <label for="new-password">Nouveau mot de passe</label>
+    <input type="password" id="new-password" required>
+    <label for="confirm-password">Confirmer le nouveau mot de passe</label>
+    <input type="password" id="confirm-password" required>
+    <button type="submit">Changer le mot de passe</button>
+  </form>
+
+  <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
+    <strong>Nouveau code de recuperation</strong>
+    <p>Notez ce code precieusement, il remplace l'ancien.</p>
+    <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
+  </div>
+
+  <script src="/admin/app.js"></script>
+  <script>
+    (async function() {
+      await checkAuth();
+      buildNav('me');
+
+      var info = document.getElementById('account-info');
+      if (!currentUser) return;
+
+      info.appendChild(createEl('p', {}, [
+        createEl('strong', { textContent: 'Email : ' }),
+        document.createTextNode(currentUser.email),
+      ]));
+      info.appendChild(createEl('p', {}, [
+        createEl('strong', { textContent: 'Role : ' }),
+        document.createTextNode(currentUser.role),
+      ]));
+
+      if (currentUser.role === 'editor' && currentUser.collections && currentUser.collections.length) {
+        info.appendChild(createEl('p', {}, [
+          createEl('strong', { textContent: 'Collections assignees :' }),
+        ]));
+        var ul = createEl('ul');
+        currentUser.collections.forEach(function(c) {
+          var label = typeof c === 'object' ? (c.name || String(c.id)) : String(c);
+          ul.appendChild(createEl('li', { textContent: label }));
+        });
+        info.appendChild(ul);
+      }
+    })();
+
+    document.getElementById('password-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      var currentPw = document.getElementById('current-password').value;
+      var newPw = document.getElementById('new-password').value;
+      var confirmPw = document.getElementById('confirm-password').value;
+
+      if (newPw !== confirmPw) {
+        showMessage('msg', 'Les mots de passe ne correspondent pas.', true);
+        return;
+      }
+
+      var validationError = validatePasswordClient(newPw);
+      if (validationError) {
+        showMessage('msg', validationError, true);
+        return;
+      }
+
+      var result = await apiPut('/admin/change-password', {
+        currentPassword: currentPw,
+        newPassword: newPw,
+      });
+
+      if (!result) return;
+
+      if (result.error || result.detail) {
+        showMessage('msg', result.error || result.detail, true);
+        return;
+      }
+
+      showMessage('msg', 'Mot de passe modifie avec succes.', false);
+      document.getElementById('password-form').reset();
+
+      if (result.recoveryCode) {
+        var box = document.getElementById('recovery-box');
+        var code = document.getElementById('recovery-code');
+        code.textContent = result.recoveryCode;
+        box.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

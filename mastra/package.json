@@ -1,0 +1,29 @@
+{
+  "name": "e-synthese-mastra",
+  "version": "1.0.0",
+  "description": "Backend RAG proxy entre Albert Conversation et Albert API",
+  "type": "module",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.41",
+    "@ai-sdk/provider": "^3.0.8",
+    "@mastra/core": "^1.18.0",
+    "@picocss/pico": "^2.1.1",
+    "@types/node": "^25.5.0",
+    "better-sqlite3": "^12.8.0",
+    "hono": "^4.12.9",
+    "mastra": "^1.3.16",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}

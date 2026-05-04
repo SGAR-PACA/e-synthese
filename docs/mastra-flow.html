@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Mastra — flux question → réponse</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    background: #ffffff;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 60px 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    text-align: center;
+    margin: 0 0 40px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    margin: 96px 0 32px;
+    letter-spacing: -0.01em;
+  }
+  svg { width: 100%; height: auto; display: block; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>De la question de l'utilisateur à sa réponse</h1>
+
+<svg viewBox="0 0 640 540" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <rect x="245" y="10" width="150" height="48" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">Utilisateur</text>
+
+  <line x1="320" y1="58" x2="320" y2="92" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="328" y="80" font-size="11" fill="#6b7280">question</text>
+
+  <rect x="195" y="92" width="250" height="56" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="125" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">Mastra Server</text>
+
+  <line x1="320" y1="148" x2="320" y2="182" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="195" y="182" width="250" height="56" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="215" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">Agent</text>
+
+  <line x1="320" y1="238" x2="320" y2="282" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="195" y="282" width="250" height="56" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="315" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">LLM (Albert)</text>
+
+  <line x1="445" y1="302" x2="525" y2="302" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="525" y1="320" x2="445" y2="320" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="525" y="270" width="100" height="80" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="575" y="298" text-anchor="middle" font-size="12" font-weight="600" fill="#111827">Tools</text>
+  <text x="575" y="318" text-anchor="middle" font-size="10.5" fill="#6b7280">search</text>
+  <text x="575" y="335" text-anchor="middle" font-size="10.5" fill="#6b7280">rerank</text>
+
+  <line x1="320" y1="338" x2="320" y2="382" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="328" y="365" font-size="11" fill="#6b7280">réponse</text>
+
+  <rect x="195" y="382" width="250" height="56" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="415" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">Stream SSE</text>
+
+  <line x1="320" y1="438" x2="320" y2="472" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="245" y="472" width="150" height="48" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="502" text-anchor="middle" font-size="14" font-weight="600" fill="#111827">Utilisateur</text>
+</svg>
+
+
+<h2>À l'intérieur de Mastra Server</h2>
+
+<svg viewBox="0 0 640 770" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <text x="320" y="20" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">↓ HTTP POST</text>
+
+  <rect x="120" y="32" width="400" height="60" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">POST /v1/chat/completions</text>
+  <text x="320" y="78" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">routes/chat-completions.ts</text>
+
+  <line x1="320" y1="92" x2="320" y2="124" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="120" y="124" width="400" height="60" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="150" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">requireApiKey + filter messages</text>
+  <text x="320" y="170" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">lib/middleware.ts</text>
+
+  <line x1="320" y1="184" x2="320" y2="216" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="120" y="216" width="400" height="60" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="242" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">ragAgent.stream(messages)</text>
+  <text x="320" y="262" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">mastra/agents/rag-agent.ts</text>
+
+  <line x1="320" y1="276" x2="320" y2="308" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="120" y="308" width="400" height="76" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="332" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Charge instructions (async)</text>
+  <text x="320" y="352" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">+ Résout model via Gateway</text>
+  <text x="320" y="372" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">mastra/gateways/albert.ts</text>
+
+  <line x1="320" y1="384" x2="320" y2="416" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="20" y="416" width="600" height="200" rx="12" fill="#f9fafb" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="40" y="436" font-size="10.5" font-weight="700" fill="#2563eb" letter-spacing="0.1em">BOUCLE LLM ↔ TOOLS</text>
+
+  <rect x="60" y="460" width="200" height="64" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="160" y="486" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">LLM (Albert)</text>
+  <text x="160" y="506" text-anchor="middle" font-size="11" fill="#6b7280">décide : tool ou texte</text>
+
+  <line x1="262" y1="480" x2="378" y2="480" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <text x="320" y="473" text-anchor="middle" font-size="10" fill="#6b7280">tool_call</text>
+
+  <line x1="378" y1="506" x2="262" y2="506" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <text x="320" y="520" text-anchor="middle" font-size="10" fill="#6b7280">résultat</text>
+
+  <rect x="380" y="460" width="200" height="64" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="480" y="486" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">Execute tool</text>
+  <text x="480" y="506" text-anchor="middle" font-size="11" fill="#6b7280">search-rag · rerank-chunks</text>
+
+  <text x="480" y="552" text-anchor="middle" font-size="11" fill="#6b7280">→ albert-client → Albert API</text>
+  <text x="480" y="569" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="ui-monospace, Menlo, monospace">lib/albert-client.ts</text>
+
+  <text x="160" y="552" text-anchor="middle" font-size="11" fill="#6b7280">(boucle jusqu'à</text>
+  <text x="160" y="569" text-anchor="middle" font-size="11" fill="#6b7280">la réponse finale)</text>
+
+  <line x1="320" y1="616" x2="320" y2="648" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <text x="328" y="636" font-size="11" fill="#6b7280">stream tokens</text>
+
+  <rect x="120" y="648" width="400" height="60" rx="8" fill="white" stroke="#111827" stroke-width="1.5"/>
+  <text x="320" y="674" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">toOpenAISSE() — conversion</text>
+  <text x="320" y="694" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">chat-completions.ts</text>
+
+  <line x1="320" y1="708" x2="320" y2="740" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <text x="320" y="758" text-anchor="middle" font-size="11" fill="#6b7280" font-family="ui-monospace, Menlo, monospace">↓ Response (text/event-stream)</text>
+</svg>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+# Image de DÉVELOPPEMENT (hot reload via bind mount)
+# Pour la prod, utiliser le Dockerfile principal (multi-stage build).
+
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# Installer toutes les dépendances (dev incluses)
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Le code source est attendu en bind mount via docker-compose :
+#   volumes:
+#     - ./mastra/src:/app/src
+#     - ./mastra/public:/app/public
+# Donc on ne copie rien d'autre ici.
+
+ENV NODE_ENV=development \
+    PORT=4111 \
+    DB_PATH=/app/data/data.db \
+    PUBLIC_DIR=/app/public
+
+# Le dossier de données est créé pour persister la SQLite via volume nommé.
+RUN mkdir -p /app/data /app/src /app/public && chown -R node:node /app
+
+USER node
+
+EXPOSE 4111
+
+# `mastra dev` recompile et redémarre le serveur quand src/ change.
+CMD ["npm", "run", "dev"]

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Collections</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Collections</h2>
+  <div id="msg" class="message"></div>
+  <p>Les collections cochees sont interrogees automatiquement a chaque requete RAG.</p>
+  <div id="collections-list"><p aria-busy="true">Chargement des collections...</p></div>
+  <button id="save-btn" style="margin-top:1rem;">Sauvegarder la selection</button>
+  <hr>
+  <details>
+    <summary>Creer une nouvelle collection</summary>
+    <form id="create-form" style="margin-top:1rem;">
+      <label for="col-name">Nom</label>
+      <input type="text" id="col-name" required>
+      <label for="col-desc">Description</label>
+      <input type="text" id="col-desc">
+      <button type="submit">Creer</button>
+    </form>
+  </details>
+  <script src="/admin/app.js"></script>
+  <script>
+    var activeCollections = [];
+
+    async function loadCollections() {
+      var config = await apiGet('/admin/config');
+      activeCollections = (config && config.defaultCollections) || [];
+      var collections = await apiGet('/v1/collections');
+      var container = document.getElementById('collections-list');
+      clearEl(container);
+      var items = (collections && collections.data) || [];
+      if (!items.length) {
+        container.appendChild(createEl('p', { textContent: 'Aucune collection trouvee. Verifiez votre cle API.' }));
+        return;
+      }
+      items.forEach(function(col) {
+        var isActive = activeCollections.indexOf(col.id) !== -1;
+        var checkbox = createEl('input', { type: 'checkbox', className: 'col-check', value: String(col.id) });
+        checkbox.checked = isActive;
+        var card = createEl('div', { className: 'collection-card' + (isActive ? ' active' : '') }, [
+          createEl('div', {}, [
+            createEl('label', {}, [
+              checkbox,
+              createEl('strong', { textContent: ' ' + col.name }),
+              document.createTextNode(' (ID: ' + col.id + ')'),
+            ]),
+            createEl('br'),
+            createEl('small', { textContent: col.description || 'Pas de description' }),
+          ]),
+          createEl('button', { className: 'outline secondary', textContent: 'Supprimer', onClick: function() { deleteCollection(col.id); } }),
+        ]);
+        container.appendChild(card);
+      });
+    }
+
+    document.getElementById('save-btn').addEventListener('click', async function() {
+      var checked = Array.from(document.querySelectorAll('.col-check:checked')).map(function(el) { return parseInt(el.value, 10); });
+      var result = await apiPut('/admin/config', { defaultCollections: checked });
+      if (result && result.ok) {
+        showMessage('msg', checked.length + ' collection(s) active(s) sauvegardee(s).', false);
+        await loadCollections();
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur', true);
+      }
+    });
+
+    document.getElementById('create-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var name = document.getElementById('col-name').value;
+      var description = document.getElementById('col-desc').value;
+      var result = await apiPost('/v1/collections', { name: name, description: description });
+      if (result && (result.id || result.data)) {
+        showMessage('msg', 'Collection creee.', false);
+        document.getElementById('col-name').value = '';
+        document.getElementById('col-desc').value = '';
+        await loadCollections();
+      } else {
+        showMessage('msg', (result && result.detail) || 'Erreur lors de la creation', true);
+      }
+    });
+
+    async function deleteCollection(id) {
+      if (!confirm('Supprimer cette collection ? Cette action est irreversible.')) return;
+      await apiDelete('/v1/collections/' + id);
+      await loadCollections();
+      showMessage('msg', 'Collection supprimee.', false);
+    }
+
+    (async function() {
+      await checkAuth();
+      buildNav('collections');
+      await loadCollections();
+    })();
+  </script>
+</body>
+</html>

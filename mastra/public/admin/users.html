@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Utilisateurs</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Utilisateurs</h2>
+  <div id="msg" class="message"></div>
+
+  <h3>Comptes utilisateurs</h3>
+  <table role="grid">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Collections</th>
+        <th>Cree le</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="users-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
+  </table>
+
+  <div id="reset-link-box" style="display:none;">
+    <article>
+      <header>Lien de reinitialisation genere</header>
+      <p>Copiez ce lien et transmettez-le a l'utilisateur :</p>
+      <code id="reset-link-value"></code>
+    </article>
+  </div>
+
+  <hr>
+
+  <h3>Invitations</h3>
+  <table role="grid">
+    <thead>
+      <tr>
+        <th>Collections</th>
+        <th>Expire le</th>
+        <th>Utilise par</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="invitations-body"><tr><td colspan="4">Chargement...</td></tr></tbody>
+  </table>
+
+  <div id="invite-link-box" style="display:none;">
+    <article>
+      <header>Lien d'invitation genere</header>
+      <p>Copiez ce lien et transmettez-le au nouvel utilisateur :</p>
+      <code id="invite-link-value"></code>
+    </article>
+  </div>
+
+  <details open>
+    <summary>Generer une invitation</summary>
+    <form id="invite-form" style="margin-top:1rem;">
+      <label for="invite-collections">Collections</label>
+      <select id="invite-collections" multiple required>
+        <option value="">Chargement...</option>
+      </select>
+      <small>Maintenez Ctrl (ou Cmd) pour selectionner plusieurs collections.</small>
+      <label for="invite-duration">Duree de validite</label>
+      <select id="invite-duration">
+        <option value="1">1 jour</option>
+        <option value="7" selected>7 jours</option>
+        <option value="30">30 jours</option>
+      </select>
+      <button type="submit">Generer l'invitation</button>
+    </form>
+  </details>
+
+  <script src="/admin/app.js"></script>
+  <script>
+    (async function() {
+      await checkAuth();
+      buildNav('users');
+      await loadUsers();
+      await loadInvitations();
+      await loadCollectionsSelect();
+    })();
+
+    async function loadUsers() {
+      var users = await apiGet('/admin/users');
+      var body = document.getElementById('users-body');
+      clearEl(body);
+      if (!users || !users.length) {
+        body.appendChild(createEl('tr', {}, [createEl('td', { colspan: '5', textContent: 'Aucun utilisateur' })]));
+        return;
+      }
+      users.forEach(function(u) {
+        var actions = createEl('td', {}, [
+          createEl('button', { className: 'outline secondary', textContent: 'Reset MDP', onClick: function() { forceReset(u.id); } }),
+          document.createTextNode(' '),
+          createEl('button', { className: 'outline secondary', textContent: 'Revoquer sessions', onClick: function() { revokeSessions(u.id); } }),
+          document.createTextNode(' '),
+          createEl('button', { className: 'outline contrast', textContent: 'Supprimer', onClick: function() { deleteUser(u.id, u.email); } }),
+        ]);
+        body.appendChild(createEl('tr', {}, [
+          createEl('td', { textContent: u.email }),
+          createEl('td', { textContent: u.role }),
+          createEl('td', { textContent: u.collections ? u.collections.join(', ') : '-' }),
+          createEl('td', { textContent: u.createdAt ? new Date(u.createdAt).toLocaleDateString('fr') : '-' }),
+          actions,
+        ]));
+      });
+    }
+
+    async function forceReset(userId) {
+      var result = await apiPost('/admin/users/' + userId + '/force-reset', {});
+      if (result && result.resetLink) {
+        document.getElementById('reset-link-value').textContent = result.resetLink;
+        document.getElementById('reset-link-box').style.display = 'block';
+        showMessage('msg', 'Lien de reinitialisation genere.', false);
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur lors de la reinitialisation', true);
+      }
+    }
+
+    async function revokeSessions(userId) {
+      if (!confirm('Revoquer toutes les sessions de cet utilisateur ?')) return;
+      var result = await apiPost('/admin/users/' + userId + '/revoke-sessions', {});
+      if (result && result.ok) {
+        showMessage('msg', 'Sessions revoquees.', false);
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur', true);
+      }
+    }
+
+    async function deleteUser(userId, email) {
+      if (!confirm('Supprimer l\'utilisateur ' + email + ' ? Cette action est irreversible.')) return;
+      var result = await apiDelete('/admin/users/' + userId);
+      if (result && result.ok) {
+        showMessage('msg', 'Utilisateur supprime.', false);
+        await loadUsers();
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur lors de la suppression', true);
+      }
+    }
+
+    async function loadInvitations() {
+      var invitations = await apiGet('/admin/invitations');
+      var body = document.getElementById('invitations-body');
+      clearEl(body);
+      if (!invitations || !invitations.length) {
+        body.appendChild(createEl('tr', {}, [createEl('td', { colspan: '4', textContent: 'Aucune invitation' })]));
+        return;
+      }
+      invitations.forEach(function(inv) {
+        body.appendChild(createEl('tr', {}, [
+          createEl('td', { textContent: inv.collections ? inv.collections.join(', ') : '-' }),
+          createEl('td', { textContent: inv.expires_at ? new Date(inv.expires_at).toLocaleString('fr') : '-' }),
+          createEl('td', { textContent: inv.used_by || '-' }),
+          createEl('td', {}, [
+            createEl('button', { className: 'outline contrast', textContent: 'Supprimer', onClick: function() { deleteInvitation(inv.id); } }),
+          ]),
+        ]));
+      });
+    }
+
+    async function deleteInvitation(id) {
+      if (!confirm('Supprimer cette invitation ?')) return;
+      var result = await apiDelete('/admin/invitations/' + id);
+      if (result && result.ok) {
+        showMessage('msg', 'Invitation supprimee.', false);
+        await loadInvitations();
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur', true);
+      }
+    }
+
+    async function loadCollectionsSelect() {
+      var collections = await apiGet('/v1/collections');
+      var select = document.getElementById('invite-collections');
+      clearEl(select);
+      var items = (collections && collections.data) || [];
+      if (!items.length) {
+        select.appendChild(createEl('option', { value: '', textContent: 'Aucune collection disponible' }));
+        return;
+      }
+      items.forEach(function(col) {
+        select.appendChild(createEl('option', { value: String(col.id), textContent: col.name + ' (' + col.id + ')' }));
+      });
+    }
+
+    document.getElementById('invite-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var select = document.getElementById('invite-collections');
+      var collections = Array.from(select.selectedOptions).map(function(opt) { return parseInt(opt.value, 10); });
+      if (!collections.length) {
+        showMessage('msg', 'Selectionnez au moins une collection.', true);
+        return;
+      }
+      var durationDays = parseInt(document.getElementById('invite-duration').value, 10);
+      var result = await apiPost('/admin/invitations', { collections: collections, durationDays: durationDays });
+      if (result && result.inviteCode) {
+        var inviteLink = window.location.origin + '/admin/register?code=' + encodeURIComponent(result.inviteCode);
+        document.getElementById('invite-link-value').textContent = inviteLink;
+        document.getElementById('invite-link-box').style.display = 'block';
+        showMessage('msg', 'Invitation generee.', false);
+        await loadInvitations();
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur lors de la creation de l\'invitation', true);
+      }
+    });
+  </script>
+</body>
+</html>

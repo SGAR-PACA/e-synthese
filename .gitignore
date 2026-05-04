@@ -1,0 +1,27 @@
+# Secrets et fichiers générés
+.env
+.env.local
+.env.*.local
+mastra/.env
+
+# Fichier llm.json rendu par bootstrap.sh (généré depuis llm.json.tpl)
+front-back/docker/patches/llm.json
+
+# Bases de données SQLite (Mastra)
+mastra/data.db
+mastra/data.db-shm
+mastra/data.db-wal
+
+# Build / dépendances Mastra (ne doivent jamais être versionnées dans
+# l'intégration — la source canonique est /Users/tom/code/E-synthese-mastra)
+mastra/node_modules/
+mastra/.mastra/
+
+# Données runtime Conversations
+data/
+
+# Système / IDE
+.DS_Store
+.vscode/
+.idea/
+*.log

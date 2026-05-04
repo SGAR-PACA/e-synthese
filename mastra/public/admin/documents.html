@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Documents</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Documents</h2>
+  <div id="msg" class="message"></div>
+  <label for="collection-select">Collection</label>
+  <select id="collection-select"><option value="">Selectionnez une collection...</option></select>
+  <div id="documents-list" style="margin-top:1rem;"><p>Selectionnez une collection pour voir ses documents.</p></div>
+  <hr>
+  <details>
+    <summary>Uploader un document</summary>
+    <form id="upload-form" style="margin-top:1rem;">
+      <label for="upload-collection">Collection cible</label>
+      <select id="upload-collection"></select>
+      <label for="upload-file">Fichier</label>
+      <input type="file" id="upload-file" required>
+      <button type="submit">Uploader</button>
+    </form>
+  </details>
+  <script src="/admin/app.js"></script>
+  <script>
+    async function loadCollectionSelects() {
+      await checkAuth();
+      buildNav('documents');
+      var collections = await apiGet('/v1/collections');
+      var items = (collections && collections.data) || [];
+      var mainSelect = document.getElementById('collection-select');
+      var uploadSelect = document.getElementById('upload-collection');
+      while (mainSelect.children.length > 1) mainSelect.removeChild(mainSelect.lastChild);
+      clearEl(uploadSelect);
+      items.forEach(function(c) {
+        var label = c.name + ' (ID: ' + c.id + ')';
+        mainSelect.appendChild(createEl('option', { value: String(c.id), textContent: label }));
+        uploadSelect.appendChild(createEl('option', { value: String(c.id), textContent: label }));
+      });
+    }
+
+    async function loadDocuments(collectionId) {
+      var container = document.getElementById('documents-list');
+      clearEl(container);
+      if (!collectionId) {
+        container.appendChild(createEl('p', { textContent: 'Selectionnez une collection pour voir ses documents.' }));
+        return;
+      }
+      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Chargement...' }));
+      var docs = await apiGet('/v1/documents?collection_id=' + collectionId);
+      clearEl(container);
+      var items = (docs && docs.data) || [];
+      if (!items.length) {
+        container.appendChild(createEl('p', { textContent: 'Aucun document dans cette collection.' }));
+        return;
+      }
+      var table = createEl('table', { role: 'grid' });
+      var thead = createEl('thead', {}, [
+        createEl('tr', {}, [
+          createEl('th', { textContent: 'Nom' }),
+          createEl('th', { textContent: 'ID' }),
+          createEl('th', { textContent: 'Actions' }),
+        ]),
+      ]);
+      var tbody = createEl('tbody');
+      items.forEach(function(d) {
+        tbody.appendChild(createEl('tr', {}, [
+          createEl('td', { textContent: d.name || String(d.id) }),
+          createEl('td', { textContent: String(d.id) }),
+          createEl('td', {}, [
+            createEl('button', { className: 'outline secondary', textContent: 'Supprimer', onClick: function() { deleteDocument(d.id); } }),
+          ]),
+        ]));
+      });
+      table.appendChild(thead);
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    document.getElementById('collection-select').addEventListener('change', function(e) {
+      loadDocuments(e.target.value);
+    });
+
+    document.getElementById('upload-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var file = document.getElementById('upload-file').files[0];
+      var collectionId = document.getElementById('upload-collection').value;
+      if (!file || !collectionId) return;
+      var formData = new FormData();
+      formData.append('file', file);
+      formData.append('collection_id', collectionId);
+      var headers = {};
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+      var res = await fetch('/v1/documents', { method: 'POST', headers: headers, body: formData });
+      if (res.status === 401) { location.href = '/admin/login'; return; }
+      var result = await res.json();
+      if (result && (result.id || result.data)) {
+        showMessage('msg', 'Document uploade avec succes.', false);
+        loadDocuments(collectionId);
+      } else {
+        showMessage('msg', (result && result.detail) || 'Erreur lors de l\'upload', true);
+      }
+    });
+
+    async function deleteDocument(id) {
+      if (!confirm('Supprimer ce document ? Cette action est irreversible.')) return;
+      await apiDelete('/v1/documents/' + id);
+      var collectionId = document.getElementById('collection-select').value;
+      loadDocuments(collectionId);
+      showMessage('msg', 'Document supprime.', false);
+    }
+
+    loadCollectionSelects();
+  </script>
+</body>
+</html>
