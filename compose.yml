@@ -169,8 +169,7 @@ services:
       - -c
       - |
         set -e
-        # 1. Rendu du template LLM (placeholder __PROXY_API_KEY__ évite les
-        # ennuis d'expansion shell des variables ${...} dans python3 -c "...")
+        # 1. Rendu du template LLM via Python (placeholder __PROXY_API_KEY__).
         python3 -c "
         import os
         template = open('/tmpl/llm.json.tpl').read()
