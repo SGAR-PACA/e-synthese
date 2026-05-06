@@ -181,6 +181,11 @@ services:
       - --timeout-graceful-shutdown=300
       - --limit-max-requests=20000
       - --lifespan=off
+      # --proxy-headers : uvicorn lit X-Forwarded-Proto/For et adapte le scope ASGI
+      # --forwarded-allow-ips=* : accepte ces headers de n'importe quel proxy upstream
+      # (sécurisé ici car nginx frontend est le seul appelant + Traefik termine TLS)
+      - --proxy-headers
+      - --forwarded-allow-ips=*
       - conversations.asgi:application
     networks:
       - default
