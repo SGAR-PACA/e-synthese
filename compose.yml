@@ -153,17 +153,17 @@ services:
       - ./front-back/env.d/production/common
       - ./front-back/env.d/production/postgresql
     volumes:
-      # Le template est en :ro ; le rendu final est écrit dans le filesystem
-      # éphémère du conteneur (pas de conflit lecture-seule).
+      # Le template est en :ro ; le rendu final est écrit dans /tmp/llm-custom.json
+      # (writable par le user non-root du container, à la différence de /app/...)
       - ./front-back/docker/patches/llm.json.tpl:/tmpl/llm.json.tpl:ro
-    command:
+    # On override ENTRYPOINT pour : (1) rendre le template via Python, puis
+    # (2) appeler l'entrypoint d'origine avec le CMD original de l'image.
+    # Pas de "command:" override — le CMD par défaut de l'image (gunicorn) est conservé.
+    entrypoint:
       - sh
       - -c
       - |
         set -e
-        # Substitue ${PROXY_API_KEY} dans le template via Python (toujours dispo dans Django)
-        # On écrit dans /tmp/ qui est writable par tous les users (le user non-root du container
-        # n'a pas accès en écriture à /app/conversations/configuration/llm/)
         python3 -c "
         import os
         template = open('/tmpl/llm.json.tpl').read()
@@ -171,7 +171,8 @@ services:
         open('/tmp/llm-custom.json', 'w').write(output)
         print('llm-custom.json rendu dans /tmp/')
         "
-        exec /usr/local/bin/entrypoint /usr/local/bin/start
+        exec /usr/local/bin/entrypoint "$$@"
+      - --
     networks:
       - default
       - lasuite
