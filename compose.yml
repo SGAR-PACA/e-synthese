@@ -122,7 +122,7 @@ services:
       - DJANGO_ALLOWED_HOSTS=${DOMAIN_FRONT},${DOMAIN_AUTH}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY requis}
       - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT},https://${DOMAIN_AUTH}
-      - LLM_CONFIGURATION_FILE_PATH=/app/conversations/configuration/llm/custom.json
+      - LLM_CONFIGURATION_FILE_PATH=/tmp/llm-custom.json
 
       # Mail
       - DJANGO_EMAIL_BRAND_NAME=${DJANGO_EMAIL_BRAND_NAME:-E-Synthèse}
@@ -156,10 +156,22 @@ services:
       # Le template est en :ro ; le rendu final est écrit dans le filesystem
       # éphémère du conteneur (pas de conflit lecture-seule).
       - ./front-back/docker/patches/llm.json.tpl:/tmpl/llm.json.tpl:ro
-    command: >
-      sh -c "apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq gettext-base >/dev/null 2>&1;
-             envsubst < /tmpl/llm.json.tpl > /app/conversations/configuration/llm/custom.json &&
-             exec /usr/local/bin/entrypoint /usr/local/bin/start"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        # Substitue ${PROXY_API_KEY} dans le template via Python (toujours dispo dans Django)
+        # On écrit dans /tmp/ qui est writable par tous les users (le user non-root du container
+        # n'a pas accès en écriture à /app/conversations/configuration/llm/)
+        python3 -c "
+        import os
+        template = open('/tmpl/llm.json.tpl').read()
+        output = template.replace('$${PROXY_API_KEY}', os.environ['PROXY_API_KEY'])
+        open('/tmp/llm-custom.json', 'w').write(output)
+        print('llm-custom.json rendu dans /tmp/')
+        "
+        exec /usr/local/bin/entrypoint /usr/local/bin/start
     networks:
       - default
       - lasuite
