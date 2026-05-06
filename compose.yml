@@ -169,6 +169,7 @@ services:
       - -c
       - |
         set -e
+        # 1. Rendu du template LLM (envsubst-like via Python)
         python3 -c "
         import os
         template = open('/tmpl/llm.json.tpl').read()
@@ -176,6 +177,13 @@ services:
         open('/tmp/llm-custom.json', 'w').write(output)
         print('llm-custom.json rendu dans /tmp/')
         "
+        # 2. Migrations Django (idempotent : skip si déjà à jour)
+        # depends_on: postgresql healthy garantit que la DB est joignable.
+        # --no-input pour ne pas hanger sur une question interactive.
+        echo "[entrypoint] Running Django migrations..."
+        cd /app && python manage.py migrate --no-input
+        echo "[entrypoint] Migrations OK."
+        # 3. Lancer l'entrypoint d'origine (qui exec uvicorn)
         exec /usr/local/bin/entrypoint "$$@"
       - --
     command:
