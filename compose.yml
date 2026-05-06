@@ -156,9 +156,10 @@ services:
       # Le template est en :ro ; le rendu final est écrit dans /tmp/llm-custom.json
       # (writable par le user non-root du container, à la différence de /app/...)
       - ./front-back/docker/patches/llm.json.tpl:/tmpl/llm.json.tpl:ro
-    # On override ENTRYPOINT pour : (1) rendre le template via Python, puis
-    # (2) appeler l'entrypoint d'origine avec le CMD original de l'image.
-    # Pas de "command:" override — le CMD par défaut de l'image (gunicorn) est conservé.
+    # On override ENTRYPOINT pour rendre le template avant le démarrage Django,
+    # puis on appelle l'entrypoint d'origine avec les args du CMD ci-dessous.
+    # Note : quand on override entrypoint dans compose, le CMD de l'image est reset → on doit
+    # le redéclarer explicitement (ici uvicorn pour Conversations ASGI).
     entrypoint:
       - sh
       - -c
@@ -173,6 +174,14 @@ services:
         "
         exec /usr/local/bin/entrypoint "$$@"
       - --
+    command:
+      - uvicorn
+      - --app-dir=/app
+      - --host=0.0.0.0
+      - --timeout-graceful-shutdown=300
+      - --limit-max-requests=20000
+      - --lifespan=off
+      - conversations.asgi:application
     networks:
       - default
       - lasuite
