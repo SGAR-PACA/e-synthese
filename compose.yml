@@ -169,11 +169,12 @@ services:
       - -c
       - |
         set -e
-        # 1. Rendu du template LLM (envsubst-like via Python)
+        # 1. Rendu du template LLM (placeholder __PROXY_API_KEY__ évite les
+        # ennuis d'expansion shell des variables ${...} dans python3 -c "...")
         python3 -c "
         import os
         template = open('/tmpl/llm.json.tpl').read()
-        output = template.replace('$${PROXY_API_KEY}', os.environ['PROXY_API_KEY'])
+        output = template.replace('__PROXY_API_KEY__', os.environ['PROXY_API_KEY'])
         open('/tmp/llm-custom.json', 'w').write(output)
         print('llm-custom.json rendu dans /tmp/')
         "

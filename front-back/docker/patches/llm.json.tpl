@@ -41,7 +41,7 @@
     {
       "hrid": "mastra",
       "base_url": "http://mastra:4111/v1",
-      "api_key": "${PROXY_API_KEY}",
+      "api_key": "__PROXY_API_KEY__",
       "kind": "openai",
       "co2_handling": null
     }
