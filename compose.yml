@@ -149,6 +149,10 @@ services:
       # Pour envsubst (le command ci-dessous)
       - PROXY_API_KEY=${PROXY_API_KEY}
 
+      # Connexion Postgres (le service postgresql crée l'user avec POSTGRES_PASSWORD,
+      # Django doit avoir ce même password pour s'y connecter)
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+
     env_file:
       - ./front-back/env.d/production/common
       - ./front-back/env.d/production/postgresql
