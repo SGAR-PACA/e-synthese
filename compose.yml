@@ -45,16 +45,21 @@ services:
     networks:
       - default
       - lasuite
+      - dokploy-network
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4111/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
-    # Pas de ports: exposés — accessible uniquement via le réseau Docker
-    # (Conversations app-dev appelle mastra:4111). Si tu veux exposer publiquement
-    # l'API Mastra (ex : pour des clients externes), ajoute des labels Traefik
-    # similaires à frontend-development ci-dessous.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.mastra.rule=Host(`${DOMAIN_MASTRA}`)"
+      - "traefik.http.routers.mastra.entrypoints=websecure"
+      - "traefik.http.routers.mastra.tls=true"
+      - "traefik.http.routers.mastra.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mastra.loadbalancer.server.port=4111"
 
   # ───────────────────────── Conversations stack ─────────────────────────
   postgresql:
