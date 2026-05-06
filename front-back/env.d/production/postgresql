@@ -1,0 +1,9 @@
+# Postgres : noms et hôtes constants. Les credentials viennent du compose.yml
+# qui interpole ${POSTGRES_PASSWORD} depuis le .env (Dokploy).
+POSTGRES_DB=conversations
+POSTGRES_USER=conversations
+
+DB_HOST=postgresql
+DB_NAME=conversations
+DB_USER=conversations
+DB_PORT=5432

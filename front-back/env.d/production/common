@@ -1,0 +1,35 @@
+# =============================================================================
+# Variables d'environnement constantes pour le backend Conversations en prod.
+# Les vars sensibles (secrets, domaines) sont injectées via le compose.yml
+# qui interpole ${VAR} depuis le .env (rempli par Dokploy).
+#
+# Note : docker-compose n'interpole PAS les ${VAR} dans les fichiers cités
+# par env_file:, donc TOUT ce qui est variable doit aller dans compose.yml.
+# =============================================================================
+
+# Django
+DJANGO_SETTINGS_MODULE=conversations.settings
+
+# Logging
+LOGGING_LEVEL_HANDLERS_CONSOLE=WARNING
+LOGGING_LEVEL_LOGGERS_ROOT=WARNING
+LOGGING_LEVEL_LOGGERS_APP=INFO
+
+# Python
+PYTHONPATH=/app
+
+# Static files (S3-compatible)
+STORAGES_STATICFILES_BACKEND=django.contrib.staticfiles.storage.StaticFilesStorage
+AWS_S3_ENDPOINT_URL=http://minio:9000
+AWS_S3_ACCESS_KEY_ID=conversations
+
+# OIDC : noms des services internes pour les endpoints serveur-à-serveur
+OIDC_OP_JWKS_ENDPOINT=http://keycloak:8080/realms/conversations/protocol/openid-connect/certs
+OIDC_OP_TOKEN_ENDPOINT=http://keycloak:8080/realms/conversations/protocol/openid-connect/token
+OIDC_OP_USER_ENDPOINT=http://keycloak:8080/realms/conversations/protocol/openid-connect/userinfo
+
+OIDC_RP_CLIENT_ID=conversations
+OIDC_RP_SIGN_ALGO=RS256
+OIDC_RP_SCOPES="openid email"
+
+OIDC_AUTH_REQUEST_EXTRA_PARAMS={"acr_values": "eidas1"}

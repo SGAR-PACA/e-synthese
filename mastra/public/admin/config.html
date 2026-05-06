@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Configuration</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Configuration</h2>
+  <div id="msg" class="message"></div>
+  <form id="config-form">
+    <fieldset>
+      <legend>API Albert</legend>
+      <label for="albertApiKey">Cle API Albert</label>
+      <input type="password" id="albertApiKey" placeholder="sk-...">
+      <small>Laissez vide pour garder la cle actuelle. Cle actuelle : <code id="current-key">...</code></small>
+      <label for="albertApiBaseUrl">URL de base Albert API</label>
+      <input type="url" id="albertApiBaseUrl" placeholder="https://albert.api.etalab.gouv.fr">
+    </fieldset>
+    <fieldset>
+      <legend>Modele LLM</legend>
+      <label for="llmModel">Modele</label>
+      <select id="llmModel"><option value="">Chargement...</option></select>
+    </fieldset>
+    <fieldset>
+      <legend>Parametres RAG</legend>
+      <div class="grid">
+        <div>
+          <label for="searchK">Nombre de resultats (K)</label>
+          <input type="number" id="searchK" min="1" max="50" value="5">
+        </div>
+        <div>
+          <label for="minScore">Score minimum</label>
+          <input type="number" id="minScore" min="0" max="1" step="0.05" value="0.5">
+        </div>
+      </div>
+      <label><input type="checkbox" id="useRerank" role="switch"> Activer le reranking</label>
+    </fieldset>
+    <fieldset>
+      <legend>Prompt systeme RAG</legend>
+      <textarea id="ragPromptTemplate" rows="6"></textarea>
+      <small>Utilisez {context} pour indiquer ou inserer le contexte RAG.</small>
+    </fieldset>
+    <fieldset>
+      <legend>Contact</legend>
+      <label for="adminContactEmail">Email de contact admin</label>
+      <input type="email" id="adminContactEmail" placeholder="admin@example.com">
+      <small>Affiche sur la page de mot de passe oublie pour contacter un administrateur.</small>
+    </fieldset>
+    <button type="submit">Sauvegarder</button>
+  </form>
+  <script src="/admin/app.js"></script>
+  <script>
+    (async function() {
+      await checkAuth();
+      buildNav('config');
+      var config = await apiGet('/admin/config');
+      if (!config) return;
+      document.getElementById('current-key').textContent = config.albertApiKey || 'Non configuree';
+      document.getElementById('albertApiBaseUrl').value = config.albertApiBaseUrl || '';
+      document.getElementById('searchK').value = config.searchK;
+      document.getElementById('minScore').value = config.minScore;
+      document.getElementById('useRerank').checked = config.useRerank;
+      document.getElementById('ragPromptTemplate').value = config.ragPromptTemplate || '';
+      document.getElementById('adminContactEmail').value = config.adminContactEmail || '';
+      var status = await apiGet('/admin/status');
+      var select = document.getElementById('llmModel');
+      clearEl(select);
+      if (status && status.albertModels && status.albertModels.length) {
+        status.albertModels.forEach(function(m) {
+          var opt = createEl('option', { value: m, textContent: m });
+          if (m === config.llmModel) opt.selected = true;
+          select.appendChild(opt);
+        });
+      } else {
+        select.appendChild(createEl('option', { value: config.llmModel, textContent: config.llmModel }));
+      }
+    })();
+
+    document.getElementById('config-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var updates = {};
+      var apiKey = document.getElementById('albertApiKey').value;
+      if (apiKey) updates.albertApiKey = apiKey;
+      updates.albertApiBaseUrl = document.getElementById('albertApiBaseUrl').value;
+      updates.llmModel = document.getElementById('llmModel').value;
+      updates.searchK = parseInt(document.getElementById('searchK').value, 10);
+      updates.minScore = parseFloat(document.getElementById('minScore').value);
+      updates.useRerank = document.getElementById('useRerank').checked;
+      updates.ragPromptTemplate = document.getElementById('ragPromptTemplate').value;
+      updates.adminContactEmail = document.getElementById('adminContactEmail').value;
+      var result = await apiPut('/admin/config', updates);
+      if (result && result.ok) {
+        showMessage('msg', 'Configuration sauvegardee. Changements actifs immediatement.', false);
+        var newConfig = await apiGet('/admin/config');
+        if (newConfig) document.getElementById('current-key').textContent = newConfig.albertApiKey;
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur lors de la sauvegarde', true);
+      }
+    });
+  </script>
+</body>
+</html>

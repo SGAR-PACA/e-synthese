@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Connexion</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <div class="login-container">
+    <h2 id="title">Connexion Admin</h2>
+    <p id="subtitle">Entrez vos identifiants pour acceder au panel.</p>
+    <div id="msg" class="message"></div>
+
+    <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
+      <strong>Code de recuperation</strong>
+      <p>Notez ce code precieusement, il ne sera plus jamais affiche.</p>
+      <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
+    </div>
+
+    <form id="form">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required placeholder="admin@example.com">
+
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" name="password" required minlength="8" placeholder="Mot de passe">
+
+      <div id="confirm-group" style="display:none;">
+        <label for="password2">Confirmer le mot de passe</label>
+        <input type="password" id="password2" name="password2" minlength="8" placeholder="Confirmer">
+      </div>
+
+      <button type="submit" id="submit-btn">Se connecter</button>
+    </form>
+
+    <p id="links" style="margin-top:1rem; text-align:center;">
+      <a href="/admin/forgot-password">Mot de passe oublie ?</a>
+    </p>
+  </div>
+  <script src="/admin/app.js"></script>
+  <script>
+    var isSetupMode = false;
+
+    (async function() {
+      var res = await fetch('/admin/auth-status');
+      var data = await res.json();
+      if (data.isAuthenticated) { location.href = '/admin/'; return; }
+      if (!data.isSetup) {
+        isSetupMode = true;
+        document.getElementById('title').textContent = 'Premier lancement';
+        document.getElementById('subtitle').textContent = 'Creez un compte administrateur pour securiser le panel.';
+        document.getElementById('confirm-group').style.display = 'block';
+        document.getElementById('submit-btn').textContent = 'Creer le compte admin';
+        document.getElementById('links').style.display = 'none';
+      }
+    })();
+
+    document.getElementById('form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var email = document.getElementById('email').value;
+      var password = document.getElementById('password').value;
+
+      var pwError = validatePasswordClient(password);
+      if (pwError) {
+        showMessage('msg', pwError, true);
+        return;
+      }
+
+      if (isSetupMode) {
+        var password2 = document.getElementById('password2').value;
+        if (password !== password2) {
+          showMessage('msg', 'Les mots de passe ne correspondent pas.', true);
+          return;
+        }
+        var result = await setupAdmin(email, password);
+        if (result.ok) {
+          if (result.recoveryCode) {
+            document.getElementById('recovery-code').textContent = result.recoveryCode;
+            document.getElementById('recovery-box').style.display = 'block';
+          }
+          setTimeout(function() { location.href = '/admin/'; }, 5000);
+        } else {
+          showMessage('msg', result.error || 'Erreur lors de la creation du compte', true);
+        }
+      } else {
+        var result = await loginUser(email, password);
+        if (result.ok) {
+          location.href = '/admin/';
+        } else {
+          showMessage('msg', result.error || 'Identifiants incorrects', true);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

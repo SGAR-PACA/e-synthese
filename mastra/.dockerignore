@@ -1,0 +1,14 @@
+node_modules
+.mastra
+dist
+.git
+.gitignore
+.env
+.env.*
+*.log
+data.db
+data.db-wal
+data.db-shm
+README.md
+.vscode
+.idea

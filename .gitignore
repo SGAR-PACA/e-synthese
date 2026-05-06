@@ -1,0 +1,25 @@
+# Secrets — JAMAIS commités
+.env
+.env.prod
+.env.local
+.env.*.local
+mastra/.env
+
+# Bases de données SQLite (Mastra) — uniquement utiles en test prod local
+mastra/data.db
+mastra/data.db-shm
+mastra/data.db-wal
+
+# Build / dépendances Mastra
+mastra/node_modules/
+mastra/.mastra/
+
+# Données runtime éventuelles si on teste prod en local
+data/
+
+# Système / IDE / artefacts de tests
+.DS_Store
+.vscode/
+.idea/
+*.log
+.playwright-mcp/

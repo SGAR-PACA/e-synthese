@@ -1,0 +1,287 @@
+name: e-synthese-prod
+
+# =============================================================================
+# Configuration PRODUCTION pour Dokploy (OVH/Scaleway)
+#
+# Différences clés vs E-synthese-final-dev :
+#  - Pas de ports exposés sauf via Traefik (géré par Dokploy)
+#  - restart: always partout
+#  - Mastra : image GHCR pinnée par digest (TODO une fois la CI publiée)
+#  - Django : DJANGO_CONFIGURATION=Production (pas de local_settings.py)
+#  - llm.json rendu via envsubst au démarrage (depuis llm.json.tpl)
+#  - Named volumes durables pour Postgres / Mastra / Keycloak / MinIO
+#
+# Variables d'env attendues (voir .env.example.prod) :
+#  DOMAIN_FRONT, DOMAIN_AUTH, ALBERT_API_KEY, PROXY_API_KEY,
+#  ENCRYPTION_KEY, DJANGO_SECRET_KEY, OIDC_RP_CLIENT_SECRET,
+#  POSTGRES_PASSWORD, KC_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD,
+#  AWS_S3_SECRET_ACCESS_KEY, EMAIL_HOST, EMAIL_USER, EMAIL_PASSWORD
+# =============================================================================
+
+services:
+  # ───────────────────────── Mastra (RAG proxy) ─────────────────────────
+  mastra:
+    # Mode définitif : image immutable depuis GHCR (à activer une fois la CI
+    # GitHub Actions opérationnelle).
+    # image: ghcr.io/${REPO_OWNER}/e-synthese-mastra@sha256:REPLACE_WITH_DIGEST
+    #
+    # Mode transitoire : build local depuis le dossier mastra/ synchronisé.
+    # À utiliser pour le premier déploiement, en attendant la CI.
+    build:
+      context: ./mastra
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - PROXY_API_KEY=${PROXY_API_KEY:?PROXY_API_KEY requis}
+      - ALBERT_API_KEY=${ALBERT_API_KEY:?ALBERT_API_KEY requis}
+      - ALBERT_API_BASE_URL=${ALBERT_API_BASE_URL:-https://albert.api.etalab.gouv.fr}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY requis}
+      - LLM_MODEL=${LLM_MODEL:-albert-large}
+      - PORT=4111
+      - DB_PATH=/data/data.db
+    volumes:
+      - mastra_data:/data
+    networks:
+      - default
+      - lasuite
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4111/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Pas de ports: exposés — accessible uniquement via le réseau Docker
+    # (Conversations app-dev appelle mastra:4111). Si tu veux exposer publiquement
+    # l'API Mastra (ex : pour des clients externes), ajoute des labels Traefik
+    # similaires à frontend-development ci-dessous.
+
+  # ───────────────────────── Conversations stack ─────────────────────────
+  postgresql:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
+    env_file:
+      - ./front-back/env.d/production/postgresql
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:5
+    restart: always
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio
+    restart: always
+    environment:
+      - MINIO_ROOT_USER=conversations
+      - MINIO_ROOT_PASSWORD=${AWS_S3_SECRET_ACCESS_KEY:?AWS_S3_SECRET_ACCESS_KEY requis}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    entrypoint: ""
+    command: minio server /data
+    volumes:
+      - minio_data:/data
+    # Pas de ports: console MinIO non exposée par défaut.
+    # Pour y accéder : ajouter des labels Traefik ci-dessous, ou tunnel SSH.
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+        restart: true
+    environment:
+      - MINIO_PASSWORD=${AWS_S3_SECRET_ACCESS_KEY}
+    entrypoint: >
+      sh -c "
+      /usr/bin/mc alias set conversations http://minio:9000 conversations $$MINIO_PASSWORD &&
+      /usr/bin/mc mb -p conversations/conversations-media-storage &&
+      /usr/bin/mc version enable conversations/conversations-media-storage &&
+      exit 0;"
+    restart: on-failure
+
+  app-dev:
+    image: lasuite/conversations-backend:main@sha256:337516bd02be0e93e5720016bc8c8faab9df263e33931e76d7a015a4e48f2613
+    platform: linux/amd64
+    restart: always
+    environment:
+      - DJANGO_CONFIGURATION=Production
+      - DJANGO_SETTINGS_MODULE=conversations.settings
+      - DJANGO_ALLOWED_HOSTS=${DOMAIN_FRONT},${DOMAIN_AUTH}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY requis}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT},https://${DOMAIN_AUTH}
+      - LLM_CONFIGURATION_FILE_PATH=/app/conversations/configuration/llm/custom.json
+
+      # Mail
+      - DJANGO_EMAIL_BRAND_NAME=${DJANGO_EMAIL_BRAND_NAME:-E-Synthèse}
+      - DJANGO_EMAIL_HOST=${EMAIL_HOST:?EMAIL_HOST requis}
+      - DJANGO_EMAIL_PORT=${EMAIL_PORT:-587}
+      - DJANGO_EMAIL_HOST_USER=${EMAIL_USER}
+      - DJANGO_EMAIL_HOST_PASSWORD=${EMAIL_PASSWORD}
+      - DJANGO_EMAIL_USE_TLS=true
+      - DJANGO_EMAIL_LOGO_IMG=https://${DOMAIN_FRONT}/assets/logo-suite-numerique.png
+
+      # Backend / Media URLs
+      - CONVERSATIONS_BASE_URL=https://${DOMAIN_FRONT}
+      - MEDIA_BASE_URL=https://${DOMAIN_FRONT}
+      - AWS_S3_SECRET_ACCESS_KEY=${AWS_S3_SECRET_ACCESS_KEY}
+
+      # OIDC
+      - OIDC_OP_AUTHORIZATION_ENDPOINT=https://${DOMAIN_AUTH}/realms/conversations/protocol/openid-connect/auth
+      - OIDC_RP_CLIENT_SECRET=${OIDC_RP_CLIENT_SECRET:?OIDC_RP_CLIENT_SECRET requis}
+      - LOGIN_REDIRECT_URL=https://${DOMAIN_FRONT}
+      - LOGIN_REDIRECT_URL_FAILURE=https://${DOMAIN_FRONT}
+      - LOGOUT_REDIRECT_URL=https://${DOMAIN_FRONT}
+      - OIDC_REDIRECT_ALLOWED_HOSTS=["https://${DOMAIN_FRONT}", "https://${DOMAIN_AUTH}"]
+
+      # Pour envsubst (le command ci-dessous)
+      - PROXY_API_KEY=${PROXY_API_KEY}
+
+    env_file:
+      - ./front-back/env.d/production/common
+      - ./front-back/env.d/production/postgresql
+    volumes:
+      # Le template est en :ro ; le rendu final est écrit dans le filesystem
+      # éphémère du conteneur (pas de conflit lecture-seule).
+      - ./front-back/docker/patches/llm.json.tpl:/tmpl/llm.json.tpl:ro
+    command: >
+      sh -c "apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq gettext-base >/dev/null 2>&1;
+             envsubst < /tmpl/llm.json.tpl > /app/conversations/configuration/llm/custom.json &&
+             exec /usr/local/bin/entrypoint /usr/local/bin/start"
+    networks:
+      - default
+      - lasuite
+    depends_on:
+      mastra:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_started
+      createbuckets:
+        condition: service_started
+    # Backend : non exposé directement — Conversations frontend lui parle via
+    # le proxy nginx interne (frontend.conf monté ci-dessous).
+
+  frontend-development:
+    image: lasuite/conversations-frontend:main@sha256:b204d0cfd2fef583947b5831e0ff6e026b003c64fd596a02ec999d036dffa6fb
+    platform: linux/amd64
+    restart: always
+    volumes:
+      - ./front-back/docker/files/etc/nginx/conf.d/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - default
+      - lasuite
+    depends_on:
+      - app-dev
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.front.rule=Host(`${DOMAIN_FRONT}`)"
+      - "traefik.http.routers.front.entrypoints=websecure"
+      - "traefik.http.routers.front.tls=true"
+      - "traefik.http.routers.front.tls.certresolver=letsencrypt"
+      - "traefik.http.services.front.loadbalancer.server.port=3000"
+
+  kc_postgresql:
+    image: postgres:17.5
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=${KC_DB_PASSWORD:?KC_DB_PASSWORD requis}
+    env_file:
+      - ./front-back/env.d/production/kc_postgresql
+    volumes:
+      - kc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    restart: always
+    volumes:
+      # Template du realm : les `__DOMAIN_FRONT__` sont substitués par sed au
+      # boot du conteneur (voir `command` ci-dessous) et le résultat est écrit
+      # dans /opt/keycloak/data/import/realm.json (volume nommé keycloak_data),
+      # avant de lancer Keycloak avec --import-realm.
+      # L'import n'a lieu qu'au premier boot ; les changements ultérieurs
+      # passent par l'admin UI Keycloak ou par un reset du volume keycloak_data.
+      - ./front-back/docker/auth/realm.prod.json.tpl:/tmp/realm.prod.json.tpl:ro
+      - keycloak_data:/opt/keycloak/data
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        mkdir -p /opt/keycloak/data/import
+        sed "s|__DOMAIN_FRONT__|${DOMAIN_FRONT}|g" /tmp/realm.prod.json.tpl > /opt/keycloak/data/import/realm.json
+        exec /opt/keycloak/bin/kc.sh start \
+          --import-realm \
+          --proxy-headers=xforwarded \
+          --hostname=https://${DOMAIN_AUTH} \
+          --hostname-strict=false \
+          --health-enabled=true \
+          --metrics-enabled=true \
+          --http-enabled=true
+    healthcheck:
+      test: ['CMD-SHELL', '[ -f /tmp/HealthCheck.java ] || echo "public class HealthCheck { public static void main(String[] args) throws java.lang.Throwable { java.net.URI uri = java.net.URI.create(args[0]); System.exit(java.net.HttpURLConnection.HTTP_OK == ((java.net.HttpURLConnection)uri.toURL().openConnection()).getResponseCode() ? 0 : 1); } }" > /tmp/HealthCheck.java && java /tmp/HealthCheck.java http://localhost:9000/health/live']
+      start_period: 30s
+      interval: 5s
+      timeout: 3s
+      retries: 60
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis}
+      KC_DB: postgres
+      KC_DB_URL_HOST: kc_postgresql
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      KC_DB_USERNAME: keycloak
+      KC_DB_SCHEMA: public
+      PROXY_ADDRESS_FORWARDING: 'true'
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'false'
+    networks:
+      - default
+      - lasuite
+    depends_on:
+      kc_postgresql:
+        condition: service_healthy
+        restart: true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`${DOMAIN_AUTH}`)"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls=true"
+      - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+
+# Pas de service maildev en prod (utiliser un vrai SMTP via EMAIL_HOST).
+# Pas de service nginx en prod : Traefik (Dokploy) sert directement
+# Conversations frontend, qui contient déjà son propre nginx interne.
+
+volumes:
+  mastra_data:
+  postgres_data:
+  kc_postgres_data:
+  redis_data:
+  minio_data:
+  keycloak_data:
+
+networks:
+  lasuite:
+    name: lasuite-network
+    driver: bridge
