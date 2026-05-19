@@ -3,13 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { getConfig } from '../lib/config.js';
 import { requireApiKey } from '../lib/middleware.js';
 import { getProxyApiKey } from '../lib/api-key.js';
-import { ragAgent } from '../mastra/agents/rag-agent.js';
 
 const MAX_TOKENS_CAP = 4096;
 
 getProxyApiKey();
 
-type OpenAIMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string };
+// Union discriminée (un membre par rôle) pour rester assignable au type de
+// messages attendu par l'agent Mastra (`MessageListInput`), sans cast `as any`.
+type OpenAIMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string };
 
 export const chatCompletionsRoute = [
   registerApiRoute('/v1/chat/completions', {
@@ -43,7 +47,7 @@ export const chatCompletionsRoute = [
         return c.json({ error: 'messages is required and must contain at least one non-placeholder message' }, 400);
       }
 
-      const modelOptions: Record<string, unknown> = {};
+      const modelOptions: { temperature?: number; maxOutputTokens?: number } = {};
       if (temperature !== undefined) modelOptions.temperature = temperature;
       if (max_tokens !== undefined) {
         const parsed = Number(max_tokens);
@@ -55,8 +59,13 @@ export const chatCompletionsRoute = [
       const config = getConfig();
       const modelId = `albert/albert/${config.llmModel || 'albert-large'}`;
 
+      // Résolution de l'agent via le registre de l'instance Mastra (issue #8),
+      // au lieu d'un import direct du module. La route dépend ainsi de
+      // l'instance — point d'entrée du storage, des traces et des scorers.
+      const ragAgent = c.get('mastra').getAgent('ragAgent');
+
       if (stream) {
-        const result = await (ragAgent as any).stream(cleanedMessages, {
+        const result = await ragAgent.stream(cleanedMessages, {
           modelSettings: modelOptions,
         });
         const sseStream = toOpenAISSE(result, config.llmModel || 'albert-large');
@@ -69,7 +78,7 @@ export const chatCompletionsRoute = [
         });
       }
 
-      const result = await (ragAgent as any).generate(cleanedMessages, {
+      const result = await ragAgent.generate(cleanedMessages, {
         modelSettings: modelOptions,
       });
 
