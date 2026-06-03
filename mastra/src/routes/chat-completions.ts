@@ -4,6 +4,7 @@ import { getConfig } from '../lib/config.js';
 import { requireApiKey } from '../lib/middleware.js';
 import { getProxyApiKey } from '../lib/api-key.js';
 import { scoreRun } from '../mastra/scorers/run.js';
+import { contentToText } from '../lib/openai-content.js';
 import type { AppConfig } from '../lib/config.js';
 
 const MAX_TOKENS_CAP = 4096;
@@ -141,7 +142,7 @@ function createBracketStripper(): (delta: string) => string {
 // Dernier message utilisateur (la question à noter).
 function lastUserText(messages: OpenAIMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return messages[i].content;
+    if (messages[i].role === 'user') return contentToText(messages[i].content);
   }
   return '';
 }

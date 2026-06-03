@@ -7,7 +7,7 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "test": "node --import tsx --test test/scorers.test.ts"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "keywords": [],
   "author": "",
