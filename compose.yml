@@ -321,7 +321,7 @@ services:
         exec /opt/keycloak/bin/kc.sh start \
           --import-realm \
           --proxy-headers=xforwarded \
-          --hostname=https://${DOMAIN_FRONT} \
+          --hostname=https://${DOMAIN_FRONT}/auth \
           --hostname-strict=false \
           --health-enabled=true \
           --metrics-enabled=true \
