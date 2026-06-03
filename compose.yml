@@ -12,7 +12,8 @@ name: e-synthese-prod
 #  - Named volumes durables pour Postgres / Mastra / Keycloak / MinIO
 #
 # Variables d'env attendues (voir .env.example.prod) :
-#  DOMAIN_FRONT, DOMAIN_AUTH, ALBERT_API_KEY, PROXY_API_KEY,
+#  DOMAIN_FRONT (domaine unique : front /, Keycloak /auth, admin Mastra /admin),
+#  ALBERT_API_KEY, PROXY_API_KEY,
 #  ENCRYPTION_KEY, DJANGO_SECRET_KEY, OIDC_RP_CLIENT_SECRET,
 #  POSTGRES_PASSWORD, KC_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD,
 #  AWS_S3_SECRET_ACCESS_KEY, EMAIL_HOST, EMAIL_USER, EMAIL_PASSWORD
@@ -57,10 +58,14 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.mastra.rule=Host(`${DOMAIN_MASTRA}`)"
+      # Domaine unique : Mastra servi par chemin sous ${DOMAIN_FRONT}.
+      # /admin (UI + API admin) et /v1 (collections, documents, chat-completions) → Mastra,
+      # SANS StripPrefix (Mastra sert nativement ces chemins). Priorité > routeur front (catch-all).
+      - "traefik.http.routers.mastra.rule=Host(`${DOMAIN_FRONT}`) && (PathPrefix(`/admin`) || PathPrefix(`/v1`))"
       - "traefik.http.routers.mastra.entrypoints=websecure"
       - "traefik.http.routers.mastra.tls=true"
       - "traefik.http.routers.mastra.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mastra.priority=100"
       - "traefik.http.services.mastra.loadbalancer.server.port=4111"
 
   mastra_postgresql:
@@ -162,9 +167,9 @@ services:
     environment:
       - DJANGO_CONFIGURATION=Production
       - DJANGO_SETTINGS_MODULE=conversations.settings
-      - DJANGO_ALLOWED_HOSTS=${DOMAIN_FRONT},${DOMAIN_AUTH}
+      - DJANGO_ALLOWED_HOSTS=${DOMAIN_FRONT}
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY requis}
-      - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT},https://${DOMAIN_AUTH}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT}
       - LLM_CONFIGURATION_FILE_PATH=/tmp/llm-custom.json
 
       # Mail
@@ -182,12 +187,12 @@ services:
       - AWS_S3_SECRET_ACCESS_KEY=${AWS_S3_SECRET_ACCESS_KEY}
 
       # OIDC
-      - OIDC_OP_AUTHORIZATION_ENDPOINT=https://${DOMAIN_AUTH}/realms/conversations/protocol/openid-connect/auth
+      - OIDC_OP_AUTHORIZATION_ENDPOINT=https://${DOMAIN_FRONT}/auth/realms/conversations/protocol/openid-connect/auth
       - OIDC_RP_CLIENT_SECRET=${OIDC_RP_CLIENT_SECRET:?OIDC_RP_CLIENT_SECRET requis}
       - LOGIN_REDIRECT_URL=https://${DOMAIN_FRONT}
       - LOGIN_REDIRECT_URL_FAILURE=https://${DOMAIN_FRONT}
       - LOGOUT_REDIRECT_URL=https://${DOMAIN_FRONT}
-      - OIDC_REDIRECT_ALLOWED_HOSTS=["https://${DOMAIN_FRONT}", "https://${DOMAIN_AUTH}"]
+      - OIDC_REDIRECT_ALLOWED_HOSTS=["https://${DOMAIN_FRONT}"]
 
       # Pour envsubst (le command ci-dessous)
       - PROXY_API_KEY=${PROXY_API_KEY}
@@ -316,7 +321,7 @@ services:
         exec /opt/keycloak/bin/kc.sh start \
           --import-realm \
           --proxy-headers=xforwarded \
-          --hostname=https://${DOMAIN_AUTH} \
+          --hostname=https://${DOMAIN_FRONT} \
           --hostname-strict=false \
           --health-enabled=true \
           --metrics-enabled=true \
@@ -338,6 +343,8 @@ services:
       KC_DB_SCHEMA: public
       PROXY_ADDRESS_FORWARDING: 'true'
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'false'
+      # Domaine unique : Keycloak servi sous /auth (front-channel ET back-channel).
+      KC_HTTP_RELATIVE_PATH: /auth
     networks:
       - default
       - lasuite
@@ -349,10 +356,11 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.auth.rule=Host(`${DOMAIN_AUTH}`)"
+      - "traefik.http.routers.auth.rule=Host(`${DOMAIN_FRONT}`) && PathPrefix(`/auth`)"
       - "traefik.http.routers.auth.entrypoints=websecure"
       - "traefik.http.routers.auth.tls=true"
       - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.auth.priority=100"
       - "traefik.http.services.auth.loadbalancer.server.port=8080"
 
 # Pas de service maildev en prod (utiliser un vrai SMTP via EMAIL_HOST).
