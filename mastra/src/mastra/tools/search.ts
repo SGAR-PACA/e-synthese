@@ -21,7 +21,7 @@ export const searchTool = createTool({
     ),
   }),
   execute: async ({ query }) => {
-    const config = getConfig();
+    const config = await getConfig();
     if (config.defaultCollections.length === 0) {
       return { chunks: [] };
     }

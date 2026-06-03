@@ -39,9 +39,11 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY requis}
       - LLM_MODEL=${LLM_MODEL:-albert-large}
       - PORT=4111
-      - DB_PATH=/data/data.db
-    volumes:
-      - mastra_data:/data
+      - DATABASE_URL=postgresql://mastra:${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}@mastra_postgresql:5432/mastra
+    depends_on:
+      mastra_postgresql:
+        condition: service_healthy
+        restart: true
     networks:
       - default
       - lasuite
@@ -60,6 +62,42 @@ services:
       - "traefik.http.routers.mastra.tls=true"
       - "traefik.http.routers.mastra.tls.certresolver=letsencrypt"
       - "traefik.http.services.mastra.loadbalancer.server.port=4111"
+
+  mastra_postgresql:
+    image: postgres:17.5
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}
+    env_file:
+      - ./front-back/env.d/production/mastra_postgresql
+    volumes:
+      - mastra_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # ───────────────────── Sauvegarde quotidienne vers S3 ─────────────────────
+  mastra_backup:
+    build:
+      context: ./front-back/docker/backup
+    restart: always
+    environment:
+      - MASTRA_DB_PASSWORD=${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
+      - KC_DB_PASSWORD=${KC_DB_PASSWORD:?KC_DB_PASSWORD requis}
+      - BACKUP_S3_ACCESS_KEY=${BACKUP_S3_ACCESS_KEY:?BACKUP_S3_ACCESS_KEY requis}
+      - BACKUP_S3_SECRET_KEY=${BACKUP_S3_SECRET_KEY:?BACKUP_S3_SECRET_KEY requis}
+    env_file:
+      - ./front-back/env.d/production/backup
+    depends_on:
+      mastra_postgresql:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      kc_postgresql:
+        condition: service_healthy
 
   # ───────────────────────── Conversations stack ─────────────────────────
   postgresql:
@@ -322,7 +360,7 @@ services:
 # Conversations frontend, qui contient déjà son propre nginx interne.
 
 volumes:
-  mastra_data:
+  mastra_postgres_data:
   postgres_data:
   kc_postgres_data:
   redis_data:

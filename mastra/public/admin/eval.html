@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Évaluation</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <main>
+    <h2>Évaluation des réponses (Mastra)</h2>
+    <p>
+      Notation automatique par LLM-juge (<strong>gpt-oss-120b</strong>) des réponses passées par
+      <code>/v1/chat/completions</code> (échantillonné), <code>/v1/score</code>, et la page
+      <strong>Test Pipeline</strong> (source <code>test</code>). Le test apparaît ici ~30&nbsp;s après l'envoi
+      (le temps que les 4 juges tournent en arrière-plan).
+    </p>
+    <div id="msg" class="message"></div>
+
+    <div class="filters">
+      <label>Source
+        <select id="f-source">
+          <option value="">Toutes</option>
+          <option value="live">live</option>
+          <option value="on-demand">on-demand</option>
+          <option value="test">test</option>
+        </select>
+      </label>
+      <label>Métrique
+        <select id="f-metric">
+          <option value="">Toutes</option>
+          <option value="system_prompt">Conformité prompt</option>
+          <option value="faithfulness">Fidélité</option>
+          <option value="completeness">Complétude</option>
+          <option value="retrieval_quality">Qualité retrieval</option>
+        </select>
+      </label>
+      <label>Score min
+        <input id="f-min" type="number" min="0" max="1" step="0.1" placeholder="0 – 1">
+      </label>
+      <button id="f-go" type="button">Rafraîchir</button>
+    </div>
+
+    <h3>Moyennes par métrique</h3>
+    <div id="averages" class="avg-grid"></div>
+
+    <h3>Réponses notées (<span id="count">0</span>)</h3>
+    <div class="table-wrap">
+      <table role="grid">
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Source</th>
+            <th scope="col">Question</th>
+            <th scope="col">Conf.</th>
+            <th scope="col">Fidélité</th>
+            <th scope="col">Complét.</th>
+            <th scope="col">Retrieval</th>
+            <th scope="col"><span class="sr-only">Détail</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="8">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/admin/app.js"></script>
+  <script>
+  (function () {
+    var METRICS = [
+      { key: 'system_prompt', label: 'Conformité prompt' },
+      { key: 'faithfulness', label: 'Fidélité' },
+      { key: 'completeness', label: 'Complétude' },
+      { key: 'retrieval_quality', label: 'Qualité retrieval' }
+    ];
+
+    function scClass(v) {
+      if (v >= 0.8) return 'sc sc-good';
+      if (v >= 0.5) return 'sc sc-mid';
+      return 'sc sc-bad';
+    }
+    function labelOf(key) {
+      var m = METRICS.find(function (x) { return x.key === key; });
+      return m ? m.label : key;
+    }
+    function scoreCell(scores, key) {
+      var s = scores.find(function (x) { return x.metric === key; });
+      if (!s) return createEl('td', {}, [createEl('span', { className: 'sc-na', textContent: '–' })]);
+      return createEl('td', {}, [createEl('span', { className: scClass(s.score), textContent: s.score.toFixed(2) })]);
+    }
+    function buildDetail(item) {
+      var wrap = createEl('div', {});
+      wrap.appendChild(createEl('p', { className: 'reason' }, [
+        createEl('strong', { textContent: 'Réponse : ' }),
+        document.createTextNode(item.answer || '(vide)')
+      ]));
+      item.scores.forEach(function (s) {
+        wrap.appendChild(createEl('p', { className: 'reason' }, [
+          createEl('span', { className: scClass(s.score), textContent: s.score.toFixed(2) }),
+          document.createTextNode('  ' + labelOf(s.metric) + ' — ' + (s.reason || ''))
+        ]));
+      });
+      return wrap;
+    }
+
+    async function load() {
+      var qs = ['limit=100'];
+      var src = document.getElementById('f-source').value;
+      var met = document.getElementById('f-metric').value;
+      var min = document.getElementById('f-min').value;
+      if (src) qs.push('source=' + encodeURIComponent(src));
+      if (met) qs.push('metric=' + encodeURIComponent(met));
+      if (min !== '') qs.push('minScore=' + encodeURIComponent(min));
+
+      var data = await apiGet('/admin/scores?' + qs.join('&'));
+      if (!data) return;
+
+      var avg = document.getElementById('averages');
+      clearEl(avg);
+      METRICS.forEach(function (m) {
+        var a = data.averages[m.key];
+        avg.appendChild(createEl('div', { className: 'avg-card' }, [
+          createEl('div', { className: 'val', textContent: a ? a.avg.toFixed(2) : '–' }),
+          createEl('div', { className: 'lbl', textContent: m.label }),
+          createEl('div', { className: 'n', textContent: a ? ('n=' + a.n) : 'n=0' })
+        ]));
+      });
+
+      document.getElementById('count').textContent = data.count;
+
+      var body = document.getElementById('rows');
+      clearEl(body);
+      if (!data.items.length) {
+        body.appendChild(createEl('tr', {}, [createEl('td', {
+          colspan: '8',
+          textContent: 'Aucune réponse notée pour ces filtres. Envoie une question via /v1/chat/completions ou /v1/score.'
+        })]));
+        return;
+      }
+
+      data.items.forEach(function (item) {
+        var detailRow = null;
+        var toggle = createEl('button', {
+          className: 'toggle outline', type: 'button', 'aria-expanded': 'false', textContent: 'Détail'
+        });
+        var tr = createEl('tr', {}, [
+          createEl('td', { textContent: new Date(item.created_at).toLocaleString('fr') }),
+          createEl('td', { textContent: item.source + (item.is_refusal ? ' (refus)' : '') }),
+          createEl('td', { textContent: (item.question || '').slice(0, 70) }),
+          scoreCell(item.scores, 'system_prompt'),
+          scoreCell(item.scores, 'faithfulness'),
+          scoreCell(item.scores, 'completeness'),
+          scoreCell(item.scores, 'retrieval_quality'),
+          createEl('td', {}, [toggle])
+        ]);
+        body.appendChild(tr);
+
+        toggle.addEventListener('click', function () {
+          if (detailRow) {
+            detailRow.remove();
+            detailRow = null;
+            toggle.setAttribute('aria-expanded', 'false');
+            return;
+          }
+          detailRow = createEl('tr', {}, [createEl('td', { colspan: '8', className: 'detail-cell' }, [buildDetail(item)])]);
+          tr.after(detailRow);
+          toggle.setAttribute('aria-expanded', 'true');
+        });
+      });
+    }
+
+    (async function () {
+      await checkAuth();
+      buildNav('eval');
+      document.getElementById('f-go').addEventListener('click', load);
+      await load();
+    })();
+  })();
+  </script>
+</body>
+</html>

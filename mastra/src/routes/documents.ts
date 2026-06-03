@@ -9,7 +9,7 @@ export const documentsRoute = [
   registerApiRoute('/v1/documents', {
     method: 'GET',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const collectionId = c.req.query('collection_id') || '';
       if (!collectionId) {
@@ -29,7 +29,7 @@ export const documentsRoute = [
   registerApiRoute('/v1/documents', {
     method: 'POST',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const csrfError = verifyCsrf(c, authCtx);
       if (csrfError) return csrfError;
@@ -54,14 +54,14 @@ export const documentsRoute = [
         return c.json({ error: 'Forbidden' }, 403);
       }
       const data = await albert.uploadDocument(formData);
-      logAudit(getClientIp(c), 'DOCUMENT_UPLOADED', authCtx.user.id, 'Collection: ' + collectionId);
+      await logAudit(getClientIp(c), 'DOCUMENT_UPLOADED', authCtx.user.id, 'Collection: ' + collectionId);
       return c.json(data);
     },
   }),
   registerApiRoute('/v1/documents/:documentId', {
     method: 'GET',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const documentId = c.req.param('documentId');
       const data = await albert.getDocument(documentId);
@@ -71,13 +71,13 @@ export const documentsRoute = [
   registerApiRoute('/v1/documents/:documentId', {
     method: 'DELETE',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const csrfError = verifyCsrf(c, authCtx);
       if (csrfError) return csrfError;
       const documentId = c.req.param('documentId');
       const data = await albert.deleteDocument(documentId);
-      logAudit(getClientIp(c), 'DOCUMENT_DELETED', authCtx.user.id, 'Document: ' + documentId);
+      await logAudit(getClientIp(c), 'DOCUMENT_DELETED', authCtx.user.id, 'Document: ' + documentId);
       return c.json(data);
     },
   }),

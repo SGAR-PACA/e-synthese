@@ -1,125 +1,142 @@
-import Database from 'better-sqlite3';
-import { join } from 'node:path';
-import { chmodSync, existsSync } from 'node:fs';
+import { Pool, types } from 'pg';
 import { randomBytes } from 'node:crypto';
 
-function resolveProjectRoot(): string {
-  const candidates = [
-    process.cwd(),
-    join(process.cwd(), '..', '..', '..'),
-    join(process.cwd(), '..', '..'),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'package.json'))) {
-      return candidate;
+// pg renvoie les TIMESTAMPTZ comme Date par défaut ; on garde des chaînes
+// pour préserver l'API existante (DbUser.created_at: string, etc.).
+types.setTypeParser(types.builtins.TIMESTAMPTZ, (v) => v as unknown as string);
+
+let pool: Pool | undefined;
+let schemaApplied = false;
+
+function getPool(): Pool {
+  if (!pool) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error('DATABASE_URL is required — la base admin Postgres est obligatoire.');
     }
+    pool = new Pool({ connectionString });
+    pool.on('error', (err) => console.error('Postgres pool error:', err));
   }
-  return process.cwd();
+  return pool;
 }
 
-const DB_PATH = process.env.DB_PATH || join(resolveProjectRoot(), 'data.db');
-let db: Database.Database;
+// Singleton sur la promesse d'init pour éviter une fenêtre de concurrence :
+// plusieurs `ensureSchema()` parallèles déclencheraient des `CREATE TABLE IF
+// NOT EXISTS` simultanés, qui ne sont pas atomic-safe dans le catalogue PG.
+let schemaPromise: Promise<void> | undefined;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    db = initDb();
-  }
-  return db;
+async function ensureSchema(): Promise<void> {
+  if (schemaApplied) return;
+  if (schemaPromise) return schemaPromise;
+  schemaPromise = applySchema();
+  return schemaPromise;
 }
 
-function initDb(): Database.Database {
-  const isNew = !existsSync(DB_PATH);
-  const database = new Database(DB_PATH);
-  database.pragma('journal_mode = WAL');
-  database.pragma('foreign_keys = ON');
-
-  if (isNew || !tableExists(database, 'users')) {
-    applySchema(database);
-  }
-
-  try { chmodSync(DB_PATH, 0o600); } catch {}
-
-  setInterval(() => cleanupExpired(database), 60 * 60 * 1000);
-  cleanupExpired(database);
-
-  return database;
-}
-
-function tableExists(database: Database.Database, name: string): boolean {
-  const row = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name) as any;
-  return !!row;
-}
-
-function runSchema(database: Database.Database, sql: string): void {
-  database.exec(sql);
-}
-
-function applySchema(database: Database.Database): void {
-  const schema = `
+async function applySchema(): Promise<void> {
+  const sql = `
     CREATE TABLE IF NOT EXISTS users (
-      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      id                  INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       email               TEXT UNIQUE NOT NULL,
       password_hash       TEXT NOT NULL,
       salt                TEXT NOT NULL,
       role                TEXT NOT NULL CHECK(role IN ('admin', 'editor')),
       recovery_code_hash  TEXT,
-      created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at          TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     );
-
     CREATE TABLE IF NOT EXISTS user_collections (
-      user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      collection_id  INTEGER NOT NULL,
+      user_id        INT REFERENCES users(id) ON DELETE CASCADE,
+      collection_id  INT NOT NULL,
       PRIMARY KEY (user_id, collection_id)
     );
-
     CREATE TABLE IF NOT EXISTS invitations (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      id             INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       code_hash      TEXT UNIQUE NOT NULL,
-      created_by     INTEGER REFERENCES users(id),
+      created_by     INT REFERENCES users(id),
       collections    TEXT NOT NULL,
       expires_at     TEXT NOT NULL,
-      used_by        INTEGER REFERENCES users(id),
+      used_by        INT REFERENCES users(id),
       used_at        TEXT
     );
-
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash     TEXT PRIMARY KEY,
-      user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_id        INT REFERENCES users(id) ON DELETE CASCADE,
       csrf_token     TEXT NOT NULL,
       expires_at     TEXT NOT NULL,
-      created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     );
-
     CREATE TABLE IF NOT EXISTS config (
       key            TEXT PRIMARY KEY,
       value          TEXT NOT NULL
     );
-
     CREATE TABLE IF NOT EXISTS password_resets (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      id             INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       token_hash     TEXT UNIQUE NOT NULL,
-      user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_id        INT REFERENCES users(id) ON DELETE CASCADE,
       expires_at     TEXT NOT NULL,
-      used           INTEGER NOT NULL DEFAULT 0
+      used           BOOLEAN NOT NULL DEFAULT false
     );
-
     CREATE TABLE IF NOT EXISTS audit_log (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp      TEXT NOT NULL DEFAULT (datetime('now')),
-      user_id        INTEGER,
+      id             INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      timestamp      TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      user_id        INT,
       ip             TEXT NOT NULL,
       action         TEXT NOT NULL,
       details        TEXT
     );
+    CREATE TABLE IF NOT EXISTS rag_runs (
+      id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      created_at   TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      source       TEXT NOT NULL,
+      question     TEXT NOT NULL,
+      answer       TEXT NOT NULL,
+      used_chunks  JSONB NOT NULL DEFAULT '[]',
+      wide_k       INT NOT NULL DEFAULT 0,
+      gen_model    TEXT,
+      is_refusal   BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE TABLE IF NOT EXISTS rag_scores (
+      id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      run_id       INT NOT NULL REFERENCES rag_runs(id) ON DELETE CASCADE,
+      metric       TEXT NOT NULL,
+      score        REAL NOT NULL,
+      reason       TEXT NOT NULL DEFAULT '',
+      judge_model  TEXT,
+      created_at   TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    );
+    CREATE INDEX IF NOT EXISTS idx_rag_scores_run    ON rag_scores(run_id);
+    CREATE INDEX IF NOT EXISTS idx_rag_scores_metric ON rag_scores(metric);
+    CREATE INDEX IF NOT EXISTS idx_rag_runs_created  ON rag_runs(created_at);
   `;
-  runSchema(database, schema);
+  await getPool().query(sql);
+  schemaApplied = true;
 }
 
-function cleanupExpired(database: Database.Database): void {
-  database.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
-  database.prepare("DELETE FROM password_resets WHERE expires_at < datetime('now')").run();
+async function query<T extends Record<string, any> = any>(sql: string, params?: any[]): Promise<T[]> {
+  await ensureSchema();
+  const result = await getPool().query<T>(sql, params);
+  return result.rows;
 }
 
+async function run(sql: string, params?: any[]): Promise<void> {
+  await ensureSchema();
+  await getPool().query(sql, params);
+}
+
+const NOW_ISO_SQL = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')";
+
+async function cleanupExpired(): Promise<void> {
+  await run(`DELETE FROM sessions WHERE expires_at < ${NOW_ISO_SQL}`);
+  await run(`DELETE FROM password_resets WHERE expires_at < ${NOW_ISO_SQL}`);
+}
+
+setInterval(() => {
+  cleanupExpired().catch((err) => console.error('cleanup error:', err));
+}, 60 * 60 * 1000);
+
+// Nettoyage immédiat au démarrage (parité avec la version SQLite).
+cleanupExpired().catch((err) => console.error('cleanup error:', err));
+
+// ---- Chiffrement (synchrone — ne touche pas la base) ----
 let encryptionKey: string | null = null;
 
 export function getEncryptionKey(): string {
@@ -137,6 +154,7 @@ export function getEncryptionKey(): string {
   return encryptionKey;
 }
 
+// ---- Types ----
 export interface DbUser {
   id: number;
   email: string;
@@ -147,104 +165,11 @@ export interface DbUser {
   created_at: string;
 }
 
-export function findUserByEmail(email: string): DbUser | undefined {
-  return getDb().prepare('SELECT * FROM users WHERE email = ?').get(email) as DbUser | undefined;
-}
-
-export function findUserById(id: number): DbUser | undefined {
-  return getDb().prepare('SELECT * FROM users WHERE id = ?').get(id) as DbUser | undefined;
-}
-
-export function createUser(email: string, passwordHash: string, salt: string, role: 'admin' | 'editor', recoveryCodeHash: string): number {
-  const result = getDb().prepare(
-    'INSERT INTO users (email, password_hash, salt, role, recovery_code_hash) VALUES (?, ?, ?, ?, ?)'
-  ).run(email, passwordHash, salt, role, recoveryCodeHash);
-  return result.lastInsertRowid as number;
-}
-
-export function updateUserPassword(userId: number, passwordHash: string, salt: string, recoveryCodeHash: string): void {
-  getDb().prepare(
-    'UPDATE users SET password_hash = ?, salt = ?, recovery_code_hash = ? WHERE id = ?'
-  ).run(passwordHash, salt, recoveryCodeHash, userId);
-}
-
-export function deleteUser(userId: number): void {
-  getDb().prepare('DELETE FROM users WHERE id = ?').run(userId);
-}
-
-export function listUsers(): DbUser[] {
-  return getDb().prepare('SELECT * FROM users ORDER BY created_at DESC').all() as DbUser[];
-}
-
-export function countAdmins(): number {
-  const row = getDb().prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as any;
-  return row.count;
-}
-
-export function isSetup(): boolean {
-  return countAdmins() > 0;
-}
-
-export function getUserCollections(userId: number): number[] {
-  const rows = getDb().prepare('SELECT collection_id FROM user_collections WHERE user_id = ?').all(userId) as any[];
-  return rows.map(r => r.collection_id);
-}
-
-export function setUserCollections(userId: number, collectionIds: number[]): void {
-  const database = getDb();
-  const del = database.prepare('DELETE FROM user_collections WHERE user_id = ?');
-  const ins = database.prepare('INSERT INTO user_collections (user_id, collection_id) VALUES (?, ?)');
-  const tx = database.transaction(() => {
-    del.run(userId);
-    for (const cid of collectionIds) {
-      ins.run(userId, cid);
-    }
-  });
-  tx();
-}
-
-const SESSION_DURATION_HOURS = 24;
-const MAX_SESSIONS_PER_USER = 5;
-
-export function createSession(userId: number, tokenHash: string, csrfToken: string): void {
-  const database = getDb();
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000).toISOString();
-
-  const sessions = database.prepare(
-    'SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at ASC'
-  ).all(userId) as any[];
-
-  if (sessions.length >= MAX_SESSIONS_PER_USER) {
-    const toDelete = sessions.slice(0, sessions.length - MAX_SESSIONS_PER_USER + 1);
-    for (const s of toDelete) {
-      database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(s.token_hash);
-    }
-  }
-
-  database.prepare(
-    'INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at) VALUES (?, ?, ?, ?)'
-  ).run(tokenHash, userId, csrfToken, expiresAt);
-}
-
 export interface DbSession {
   token_hash: string;
   user_id: number;
   csrf_token: string;
   expires_at: string;
-}
-
-export function findSession(tokenHash: string): DbSession | undefined {
-  return getDb().prepare(
-    "SELECT * FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')"
-  ).get(tokenHash) as DbSession | undefined;
-}
-
-export function deleteSession(tokenHash: string): void {
-  getDb().prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
-}
-
-export function deleteUserSessions(userId: number): void {
-  getDb().prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
 }
 
 export interface DbInvitation {
@@ -257,77 +182,337 @@ export interface DbInvitation {
   used_at: string | null;
 }
 
-export function createInvitation(codeHash: string, createdBy: number, collections: number[], expiresAt: string): number {
-  const result = getDb().prepare(
-    'INSERT INTO invitations (code_hash, created_by, collections, expires_at) VALUES (?, ?, ?, ?)'
-  ).run(codeHash, createdBy, JSON.stringify(collections), expiresAt);
-  return result.lastInsertRowid as number;
+// ---- Users ----
+export async function findUserByEmail(email: string): Promise<DbUser | undefined> {
+  const rows = await query<DbUser>('SELECT * FROM users WHERE email = $1', [email]);
+  return rows[0];
 }
 
-export function findInvitationByHash(codeHash: string): DbInvitation | undefined {
-  return getDb().prepare(
-    "SELECT * FROM invitations WHERE code_hash = ? AND used_by IS NULL AND expires_at > datetime('now')"
-  ).get(codeHash) as DbInvitation | undefined;
+export async function findUserById(id: number): Promise<DbUser | undefined> {
+  const rows = await query<DbUser>('SELECT * FROM users WHERE id = $1', [id]);
+  return rows[0];
 }
 
-export function markInvitationUsed(invitationId: number, usedBy: number): void {
-  getDb().prepare(
-    "UPDATE invitations SET used_by = ?, used_at = datetime('now') WHERE id = ?"
-  ).run(usedBy, invitationId);
+export async function createUser(email: string, passwordHash: string, salt: string, role: 'admin' | 'editor', recoveryCodeHash: string): Promise<number> {
+  const rows = await query<{ id: number }>(
+    'INSERT INTO users (email, password_hash, salt, role, recovery_code_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [email, passwordHash, salt, role, recoveryCodeHash]
+  );
+  return rows[0].id;
 }
 
-export function listInvitations(): DbInvitation[] {
-  return getDb().prepare('SELECT * FROM invitations ORDER BY id DESC').all() as DbInvitation[];
+export async function updateUserPassword(userId: number, passwordHash: string, salt: string, recoveryCodeHash: string): Promise<void> {
+  await run(
+    'UPDATE users SET password_hash = $1, salt = $2, recovery_code_hash = $3 WHERE id = $4',
+    [passwordHash, salt, recoveryCodeHash, userId]
+  );
 }
 
-export function deleteInvitation(id: number): void {
-  getDb().prepare('DELETE FROM invitations WHERE id = ?').run(id);
+export async function deleteUser(userId: number): Promise<void> {
+  await run('DELETE FROM users WHERE id = $1', [userId]);
 }
 
-export function createPasswordReset(tokenHash: string, userId: number, expiresAt: string): void {
-  getDb().prepare(
-    'INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)'
-  ).run(tokenHash, userId, expiresAt);
+export async function listUsers(): Promise<DbUser[]> {
+  return query<DbUser>('SELECT * FROM users ORDER BY created_at DESC');
 }
 
-export function findPasswordReset(tokenHash: string): { id: number; user_id: number } | undefined {
-  return getDb().prepare(
-    "SELECT id, user_id FROM password_resets WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')"
-  ).get(tokenHash) as { id: number; user_id: number } | undefined;
+export async function countAdmins(): Promise<number> {
+  const rows = await query<{ count: string }>("SELECT COUNT(*)::text AS count FROM users WHERE role = 'admin'");
+  return parseInt(rows[0].count, 10);
 }
 
-export function markResetUsed(id: number): void {
-  getDb().prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(id);
+export async function isSetup(): Promise<boolean> {
+  return (await countAdmins()) > 0;
 }
 
-export function getConfigValue(key: string): string | undefined {
-  const row = getDb().prepare('SELECT value FROM config WHERE key = ?').get(key) as any;
-  return row?.value;
+// ---- User collections ----
+export async function getUserCollections(userId: number): Promise<number[]> {
+  const rows = await query<{ collection_id: number }>('SELECT collection_id FROM user_collections WHERE user_id = $1', [userId]);
+  return rows.map((r) => r.collection_id);
 }
 
-export function setConfigValue(key: string, value: string): void {
-  getDb().prepare(
-    'INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  ).run(key, value);
+export async function setUserCollections(userId: number, collectionIds: number[]): Promise<void> {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM user_collections WHERE user_id = $1', [userId]);
+    for (const cid of collectionIds) {
+      await client.query('INSERT INTO user_collections (user_id, collection_id) VALUES ($1, $2)', [userId, cid]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-export function getAllConfig(): Record<string, string> {
-  const rows = getDb().prepare('SELECT key, value FROM config').all() as any[];
+// ---- Sessions ----
+const SESSION_DURATION_HOURS = 24;
+const MAX_SESSIONS_PER_USER = 5;
+
+export async function createSession(userId: number, tokenHash: string, csrfToken: string): Promise<void> {
+  await ensureSchema();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000).toISOString();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const sessions = await client.query<{ token_hash: string }>(
+      'SELECT token_hash FROM sessions WHERE user_id = $1 ORDER BY created_at ASC',
+      [userId]
+    );
+    if (sessions.rows.length >= MAX_SESSIONS_PER_USER) {
+      const toDelete = sessions.rows.slice(0, sessions.rows.length - MAX_SESSIONS_PER_USER + 1);
+      for (const s of toDelete) {
+        await client.query('DELETE FROM sessions WHERE token_hash = $1', [s.token_hash]);
+      }
+    }
+    await client.query(
+      'INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at) VALUES ($1, $2, $3, $4)',
+      [tokenHash, userId, csrfToken, expiresAt]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function findSession(tokenHash: string): Promise<DbSession | undefined> {
+  const rows = await query<DbSession>(
+    `SELECT * FROM sessions WHERE token_hash = $1 AND expires_at > ${NOW_ISO_SQL}`,
+    [tokenHash]
+  );
+  return rows[0];
+}
+
+export async function deleteSession(tokenHash: string): Promise<void> {
+  await run('DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
+}
+
+export async function deleteUserSessions(userId: number): Promise<void> {
+  await run('DELETE FROM sessions WHERE user_id = $1', [userId]);
+}
+
+// ---- Invitations ----
+export async function createInvitation(codeHash: string, createdBy: number, collections: number[], expiresAt: string): Promise<number> {
+  const rows = await query<{ id: number }>(
+    'INSERT INTO invitations (code_hash, created_by, collections, expires_at) VALUES ($1, $2, $3, $4) RETURNING id',
+    [codeHash, createdBy, JSON.stringify(collections), expiresAt]
+  );
+  return rows[0].id;
+}
+
+export async function findInvitationByHash(codeHash: string): Promise<DbInvitation | undefined> {
+  const rows = await query<DbInvitation>(
+    `SELECT * FROM invitations WHERE code_hash = $1 AND used_by IS NULL AND expires_at > ${NOW_ISO_SQL}`,
+    [codeHash]
+  );
+  return rows[0];
+}
+
+export async function markInvitationUsed(invitationId: number, usedBy: number): Promise<void> {
+  await run(
+    `UPDATE invitations SET used_by = $1, used_at = ${NOW_ISO_SQL} WHERE id = $2`,
+    [usedBy, invitationId]
+  );
+}
+
+export async function listInvitations(): Promise<DbInvitation[]> {
+  return query<DbInvitation>('SELECT * FROM invitations ORDER BY id DESC');
+}
+
+export async function deleteInvitation(id: number): Promise<void> {
+  await run('DELETE FROM invitations WHERE id = $1', [id]);
+}
+
+// ---- Password resets ----
+export async function createPasswordReset(tokenHash: string, userId: number, expiresAt: string): Promise<void> {
+  await run(
+    'INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
+    [tokenHash, userId, expiresAt]
+  );
+}
+
+export async function findPasswordReset(tokenHash: string): Promise<{ id: number; user_id: number } | undefined> {
+  const rows = await query<{ id: number; user_id: number }>(
+    `SELECT id, user_id FROM password_resets WHERE token_hash = $1 AND used = false AND expires_at > ${NOW_ISO_SQL}`,
+    [tokenHash]
+  );
+  return rows[0];
+}
+
+export async function markResetUsed(id: number): Promise<void> {
+  await run('UPDATE password_resets SET used = true WHERE id = $1', [id]);
+}
+
+// ---- Config ----
+export async function getConfigValue(key: string): Promise<string | undefined> {
+  const rows = await query<{ value: string }>('SELECT value FROM config WHERE key = $1', [key]);
+  return rows[0]?.value;
+}
+
+export async function setConfigValue(key: string, value: string): Promise<void> {
+  await run(
+    'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value',
+    [key, value]
+  );
+}
+
+export async function getAllConfig(): Promise<Record<string, string>> {
+  const rows = await query<{ key: string; value: string }>('SELECT key, value FROM config');
   const result: Record<string, string> = {};
   for (const row of rows) result[row.key] = row.value;
   return result;
 }
 
-export function logAudit(ip: string, action: string, userId?: number, details?: string): void {
-  getDb().prepare(
-    'INSERT INTO audit_log (ip, action, user_id, details) VALUES (?, ?, ?, ?)'
-  ).run(ip, action, userId ?? null, details ?? null);
+// ---- Audit log ----
+export async function logAudit(ip: string, action: string, userId?: number, details?: string): Promise<void> {
+  await run(
+    'INSERT INTO audit_log (ip, action, user_id, details) VALUES ($1, $2, $3, $4)',
+    [ip, action, userId ?? null, details ?? null]
+  );
 }
 
-export function getAuditLog(limit = 100): any[] {
-  return getDb().prepare(
+export async function getAuditLog(limit = 100): Promise<any[]> {
+  return query(
     `SELECT a.*, u.email as user_email FROM audit_log a
      LEFT JOIN users u ON a.user_id = u.id
-     ORDER BY a.id DESC LIMIT ?`
-  ).all(limit);
+     ORDER BY a.id DESC LIMIT $1`,
+    [limit]
+  );
+}
+
+// ---- Évaluation RAG (notation) ----
+export interface RagChunk { name: string; content: string; score: number; url: string }
+
+export interface RagRunInput {
+  source: 'live' | 'on-demand' | 'test';
+  question: string;
+  answer: string;
+  usedChunks: RagChunk[];
+  wideK: number;
+  genModel: string | null;
+  isRefusal: boolean;
+}
+
+export interface RagScoreInput {
+  metric: string;
+  score: number;
+  reason: string;
+  judgeModel: string | null;
+}
+
+export interface ScoreFilters {
+  metric?: string;
+  from?: string;
+  to?: string;
+  minScore?: number;
+  maxScore?: number;
+  source?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function insertRagRun(r: RagRunInput): Promise<number> {
+  const rows = await query<{ id: number }>(
+    `INSERT INTO rag_runs (source, question, answer, used_chunks, wide_k, gen_model, is_refusal)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) RETURNING id`,
+    [r.source, r.question, r.answer, JSON.stringify(r.usedChunks), r.wideK, r.genModel, r.isRefusal],
+  );
+  return rows[0].id;
+}
+
+export async function insertRagScores(runId: number, scores: RagScoreInput[]): Promise<void> {
+  for (const s of scores) {
+    await run(
+      `INSERT INTO rag_scores (run_id, metric, score, reason, judge_model)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [runId, s.metric, s.score, s.reason, s.judgeModel],
+    );
+  }
+}
+
+/** Moyennes par métrique (calculées en SQL), sur les notes filtrées. */
+export async function getScoreAverages(f: ScoreFilters): Promise<Record<string, { avg: number; n: number }>> {
+  const rows = await query<{ metric: string; avg: number; n: number }>(
+    `SELECT s.metric, AVG(s.score)::float AS avg, COUNT(*)::int AS n
+       FROM rag_scores s JOIN rag_runs r ON r.id = s.run_id
+      WHERE ($1::text  IS NULL OR r.source   = $1)
+        AND ($2::text  IS NULL OR r.created_at >= $2)
+        AND ($3::text  IS NULL OR r.created_at <= $3)
+        AND ($4::text  IS NULL OR s.metric   = $4)
+        AND ($5::float IS NULL OR s.score   >= $5)
+        AND ($6::float IS NULL OR s.score   <= $6)
+      GROUP BY s.metric`,
+    [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null],
+  );
+  const out: Record<string, { avg: number; n: number }> = {};
+  for (const row of rows) out[row.metric] = { avg: Math.round(row.avg * 1000) / 1000, n: row.n };
+  return out;
+}
+
+export interface ScoreItem {
+  run_id: number;
+  created_at: string;
+  source: string;
+  question: string;
+  answer: string;
+  is_refusal: boolean;
+  scores: { metric: string; score: number; reason: string }[];
+}
+
+/** Page de runs (filtres niveau run + existence d'une note correspondant aux filtres de métrique/score). */
+export async function getScores(f: ScoreFilters): Promise<{ count: number; items: ScoreItem[] }> {
+  const limit = f.limit ?? 50;
+  const offset = f.offset ?? 0;
+  const filterParams = [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null];
+
+  const whereRuns =
+    `($1::text  IS NULL OR r.source   = $1)
+     AND ($2::text  IS NULL OR r.created_at >= $2)
+     AND ($3::text  IS NULL OR r.created_at <= $3)
+     AND ( ($4::text IS NULL AND $5::float IS NULL AND $6::float IS NULL)
+           OR EXISTS (SELECT 1 FROM rag_scores s WHERE s.run_id = r.id
+                        AND ($4::text  IS NULL OR s.metric = $4)
+                        AND ($5::float IS NULL OR s.score >= $5)
+                        AND ($6::float IS NULL OR s.score <= $6)) )`;
+
+  const countRows = await query<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM rag_runs r WHERE ${whereRuns}`,
+    filterParams,
+  );
+  const count = countRows[0]?.count ?? 0;
+
+  const runs = await query<{ id: number; created_at: string; source: string; question: string; answer: string; is_refusal: boolean }>(
+    `SELECT r.id, r.created_at, r.source, r.question, r.answer, r.is_refusal
+       FROM rag_runs r WHERE ${whereRuns}
+      ORDER BY r.created_at DESC
+      LIMIT $7 OFFSET $8`,
+    [...filterParams, limit, offset],
+  );
+
+  const ids = runs.map((r) => r.id);
+  const scoreRows = ids.length
+    ? await query<{ run_id: number; metric: string; score: number; reason: string }>(
+        `SELECT run_id, metric, score, reason FROM rag_scores WHERE run_id = ANY($1::int[]) ORDER BY id`,
+        [ids],
+      )
+    : [];
+
+  const items: ScoreItem[] = runs.map((r) => ({
+    run_id: r.id,
+    created_at: r.created_at,
+    source: r.source,
+    question: r.question,
+    answer: r.answer,
+    is_refusal: r.is_refusal,
+    scores: scoreRows.filter((s) => s.run_id === r.id).map((s) => ({ metric: s.metric, score: s.score, reason: s.reason })),
+  }));
+
+  return { count, items };
 }

@@ -56,6 +56,7 @@ export const adminUiRoute = [
   registerApiRoute('/admin/users-page', { method: 'GET', handler: serveStatic('admin/users.html') }),
   registerApiRoute('/admin/account', { method: 'GET', handler: serveStatic('admin/me.html') }),
   registerApiRoute('/admin/audit-page', { method: 'GET', handler: serveStatic('admin/audit.html') }),
+  registerApiRoute('/admin/eval', { method: 'GET', handler: serveStatic('admin/eval.html') }),
   registerApiRoute('/admin/style.css', { method: 'GET', handler: serveStatic('admin/style.css') }),
   registerApiRoute('/admin/app.js', { method: 'GET', handler: serveStatic('admin/app.js') }),
   registerApiRoute('/admin/pico.min.css', { method: 'GET', handler: serveStatic('admin/pico.min.css') }),

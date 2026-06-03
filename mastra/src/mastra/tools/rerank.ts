@@ -23,7 +23,7 @@ export const rerankTool = createTool({
   }),
   execute: async ({ query, chunks }) => {
     if (!chunks.length) return { chunks: [] };
-    const config = getConfig();
+    const config = await getConfig();
     const rerankResults = await albert.rerank({
       query,
       documents: chunks.map((c: { content: string }) => c.content),

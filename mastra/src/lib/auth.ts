@@ -21,24 +21,24 @@ export function parseSessionCookie(cookieHeader: string | undefined): string | n
   return match ? match[1] : null;
 }
 
-export function isSetup(): boolean {
+export async function isSetup(): Promise<boolean> {
   return db.isSetup();
 }
 
-export function setupAdmin(email: string, password: string): { recoveryCode: string } {
+export async function setupAdmin(email: string, password: string): Promise<{ recoveryCode: string }> {
   const { hash, salt } = hashPassword(password);
   const recoveryCode = generateRecoveryCode();
-  db.createUser(email, hash, salt, 'admin', sha256(recoveryCode));
+  await db.createUser(email, hash, salt, 'admin', sha256(recoveryCode));
   return { recoveryCode };
 }
 
-export function login(email: string, password: string): { token: string; csrfToken: string; user: db.DbUser } | null {
-  const user = db.findUserByEmail(email);
+export async function login(email: string, password: string): Promise<{ token: string; csrfToken: string; user: db.DbUser } | null> {
+  const user = await db.findUserByEmail(email);
   if (!user) return null;
   if (!verifyPassword(password, user.password_hash, user.salt)) return null;
   const token = generateToken();
   const csrfToken = generateToken();
-  db.createSession(user.id, sha256(token), csrfToken);
+  await db.createSession(user.id, sha256(token), csrfToken);
   return { token, csrfToken, user };
 }
 
@@ -47,36 +47,36 @@ export interface SessionInfo {
   csrfToken: string;
 }
 
-export function validateSession(token: string): SessionInfo | null {
-  const session = db.findSession(sha256(token));
+export async function validateSession(token: string): Promise<SessionInfo | null> {
+  const session = await db.findSession(sha256(token));
   if (!session) return null;
-  const user = db.findUserById(session.user_id);
+  const user = await db.findUserById(session.user_id);
   if (!user) return null;
   return { user, csrfToken: session.csrf_token };
 }
 
-export function logout(token: string): void {
-  db.deleteSession(sha256(token));
+export async function logout(token: string): Promise<void> {
+  await db.deleteSession(sha256(token));
 }
 
-export function register(email: string, password: string, inviteCode: string): { recoveryCode: string; userId: number } | { error: string } {
-  const invitation = db.findInvitationByHash(sha256(inviteCode));
+export async function register(email: string, password: string, inviteCode: string): Promise<{ recoveryCode: string; userId: number } | { error: string }> {
+  const invitation = await db.findInvitationByHash(sha256(inviteCode));
   if (!invitation) return { error: 'Code d\'invitation invalide ou expire' };
-  if (db.findUserByEmail(email)) return { error: 'Cet email est deja utilise' };
+  if (await db.findUserByEmail(email)) return { error: 'Cet email est deja utilise' };
 
   const { hash, salt } = hashPassword(password);
   const recoveryCode = generateRecoveryCode();
-  const userId = db.createUser(email, hash, salt, 'editor', sha256(recoveryCode));
+  const userId = await db.createUser(email, hash, salt, 'editor', sha256(recoveryCode));
 
   const collections: number[] = JSON.parse(invitation.collections);
-  db.setUserCollections(userId, collections);
-  db.markInvitationUsed(invitation.id, userId);
+  await db.setUserCollections(userId, collections);
+  await db.markInvitationUsed(invitation.id, userId);
 
   return { recoveryCode, userId };
 }
 
-export function forgotPassword(email: string, recoveryCode: string, newPassword: string): { recoveryCode: string } | { error: string } {
-  const user = db.findUserByEmail(email);
+export async function forgotPassword(email: string, recoveryCode: string, newPassword: string): Promise<{ recoveryCode: string } | { error: string }> {
+  const user = await db.findUserByEmail(email);
   const providedHash = sha256(recoveryCode);
   const storedHash = user?.recovery_code_hash ?? sha256('');
   const hashMatches = safeCompareHex(providedHash, storedHash);
@@ -86,51 +86,52 @@ export function forgotPassword(email: string, recoveryCode: string, newPassword:
 
   const { hash, salt } = hashPassword(newPassword);
   const newRecoveryCode = generateRecoveryCode();
-  db.updateUserPassword(user.id, hash, salt, sha256(newRecoveryCode));
-  db.deleteUserSessions(user.id);
+  await db.updateUserPassword(user.id, hash, salt, sha256(newRecoveryCode));
+  await db.deleteUserSessions(user.id);
 
   return { recoveryCode: newRecoveryCode };
 }
 
-export function createForceReset(userId: number): string {
+export async function createForceReset(userId: number): Promise<string> {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  db.createPasswordReset(sha256(token), userId, expiresAt);
+  await db.createPasswordReset(sha256(token), userId, expiresAt);
   return token;
 }
 
-export function executeForceReset(token: string, newPassword: string): { recoveryCode: string } | { error: string } {
-  const reset = db.findPasswordReset(sha256(token));
+export async function executeForceReset(token: string, newPassword: string): Promise<{ recoveryCode: string } | { error: string }> {
+  const reset = await db.findPasswordReset(sha256(token));
   if (!reset) return { error: 'Lien de reset invalide ou expire' };
 
   const { hash, salt } = hashPassword(newPassword);
   const newRecoveryCode = generateRecoveryCode();
-  db.updateUserPassword(reset.user_id, hash, salt, sha256(newRecoveryCode));
-  db.markResetUsed(reset.id);
-  db.deleteUserSessions(reset.user_id);
+  await db.updateUserPassword(reset.user_id, hash, salt, sha256(newRecoveryCode));
+  await db.markResetUsed(reset.id);
+  await db.deleteUserSessions(reset.user_id);
 
   return { recoveryCode: newRecoveryCode };
 }
 
-export function changePassword(userId: number, currentPassword: string, newPassword: string): { recoveryCode: string } | { error: string } {
-  const user = db.findUserById(userId);
+export async function changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{ recoveryCode: string } | { error: string }> {
+  const user = await db.findUserById(userId);
   if (!user) return { error: 'Utilisateur introuvable' };
   if (!verifyPassword(currentPassword, user.password_hash, user.salt)) return { error: 'Mot de passe actuel incorrect' };
 
   const { hash, salt } = hashPassword(newPassword);
   const newRecoveryCode = generateRecoveryCode();
-  db.updateUserPassword(user.id, hash, salt, sha256(newRecoveryCode));
+  await db.updateUserPassword(user.id, hash, salt, sha256(newRecoveryCode));
 
   return { recoveryCode: newRecoveryCode };
 }
 
-export function createInvitation(createdBy: number, collections: number[], durationDays: number): string {
+export async function createInvitation(createdBy: number, collections: number[], durationDays: number): Promise<string> {
   const code = generateInviteCode();
   const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
-  db.createInvitation(sha256(code), createdBy, collections, expiresAt);
+  await db.createInvitation(sha256(code), createdBy, collections, expiresAt);
   return code;
 }
 
+// Rate limiting (in-memory, synchrone — inchangé)
 interface RateEntry {
   attempts: number;
   blockedUntil: number;

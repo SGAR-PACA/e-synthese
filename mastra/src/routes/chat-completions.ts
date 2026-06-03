@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { getConfig } from '../lib/config.js';
 import { requireApiKey } from '../lib/middleware.js';
 import { getProxyApiKey } from '../lib/api-key.js';
+import { scoreRun } from '../mastra/scorers/run.js';
+import type { AppConfig } from '../lib/config.js';
 
 const MAX_TOKENS_CAP = 4096;
 
@@ -56,7 +58,7 @@ export const chatCompletionsRoute = [
         }
       }
 
-      const config = getConfig();
+      const config = await getConfig();
       const modelId = `albert/albert/${config.llmModel || 'albert-large'}`;
 
       // Résolution de l'agent via le registre de l'instance Mastra (issue #8),
@@ -69,6 +71,7 @@ export const chatCompletionsRoute = [
           modelSettings: modelOptions,
         });
         const sseStream = toOpenAISSE(result, config.llmModel || 'albert-large');
+        maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
         return new Response(sseStream, {
           headers: {
             'Content-Type': 'text/event-stream',
@@ -81,6 +84,8 @@ export const chatCompletionsRoute = [
       const result = await ragAgent.generate(cleanedMessages, {
         modelSettings: modelOptions,
       });
+
+      maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
 
       const openAIResponse = {
         id: `chatcmpl-${randomUUID()}`,
@@ -131,6 +136,33 @@ function createBracketStripper(): (delta: string) => string {
     }
     return out;
   };
+}
+
+// Dernier message utilisateur (la question à noter).
+function lastUserText(messages: OpenAIMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content;
+  }
+  return '';
+}
+
+// Texte final de la réponse : string en non-stream, promesse en stream.
+async function resolveAnswerText(result: any): Promise<string> {
+  const t = result?.text;
+  if (typeof t === 'string') return t;
+  if (t && typeof t.then === 'function') return (await t) ?? '';
+  return '';
+}
+
+// Notation LIVE : échantillonnée, détachée, JAMAIS bloquante ni propagatrice d'erreur.
+function maybeScoreLive(messages: OpenAIMessage[], result: any, config: AppConfig, genModel: string): void {
+  if (Math.random() >= (config.evalSamplingRate ?? 0)) return;
+  void (async () => {
+    const question = lastUserText(messages);
+    const answer = stripCitationBrackets(await resolveAnswerText(result));
+    if (!question || !answer) return;
+    await scoreRun({ question, answer, agentResult: result, source: 'live', genModel });
+  })().catch((err) => console.error('[eval] scoring live échoué:', err?.message || err));
 }
 
 function toOpenAISSE(agentStream: any, model: string): ReadableStream<Uint8Array> {

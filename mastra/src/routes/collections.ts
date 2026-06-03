@@ -6,7 +6,7 @@ export const collectionsRoute = [
   registerApiRoute('/v1/collections', {
     method: 'GET',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const data = await albert.listCollections();
       if (authCtx.user.role === 'editor' && data.data) {
@@ -18,7 +18,7 @@ export const collectionsRoute = [
   registerApiRoute('/v1/collections', {
     method: 'POST',
     handler: async (c) => {
-      const authCtx = requireAdmin(c);
+      const authCtx = await requireAdmin(c);
       if (authCtx instanceof Response) return authCtx;
       const csrfError = verifyCsrf(c, authCtx);
       if (csrfError) return csrfError;
@@ -30,7 +30,7 @@ export const collectionsRoute = [
   registerApiRoute('/v1/collections/:collectionId', {
     method: 'GET',
     handler: async (c) => {
-      const authCtx = requireAuth(c);
+      const authCtx = await requireAuth(c);
       if (authCtx instanceof Response) return authCtx;
       const collectionId = c.req.param('collectionId');
       if (authCtx.user.role === 'editor' && !authCtx.collections.includes(parseInt(collectionId, 10))) {
@@ -43,7 +43,7 @@ export const collectionsRoute = [
   registerApiRoute('/v1/collections/:collectionId', {
     method: 'DELETE',
     handler: async (c) => {
-      const authCtx = requireAdmin(c);
+      const authCtx = await requireAdmin(c);
       if (authCtx instanceof Response) return authCtx;
       const csrfError = verifyCsrf(c, authCtx);
       if (csrfError) return csrfError;
