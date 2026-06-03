@@ -1,0 +1,4 @@
+# Postgres Mastra (prod) : storage Mastra (traces, evals, mémoire).
+# Le mot de passe vient du compose.yml qui interpole ${MASTRA_DB_PASSWORD}.
+POSTGRES_DB=mastra
+POSTGRES_USER=mastra

@@ -47,16 +47,20 @@ Les critères de priorisation retenus :
 - Source 1 : *1-note au sgar- projet répartition DSIL-DSID 2025 post LFI 07-03-25 vu BC avec com.pdf*
 - Source 2 : *Annexe - orientations de mise en oeuvre des dotations DSIL-DSID 2025.pdf*`;
 
+// Instructions effectives de l'agent (prompt système). Exportées pour que le scorer de
+// conformité (`system_prompt`) évalue exactement le contrat réellement imposé à l'agent.
+export async function resolveInstructions(): Promise<string> {
+  const config = await getConfig();
+  const base = config.ragPromptTemplate?.replace(/\{context\}/g, '').trim();
+  return base && base.length > 30 ? `${base}\n\n${DEFAULT_INSTRUCTIONS}` : DEFAULT_INSTRUCTIONS;
+}
+
 export const ragAgent = new Agent({
   id: 'rag-agent',
   name: 'E-Synthèse RAG Agent',
-  instructions: async () => {
-    const config = getConfig();
-    const base = config.ragPromptTemplate?.replace(/\{context\}/g, '').trim();
-    return base && base.length > 30 ? `${base}\n\n${DEFAULT_INSTRUCTIONS}` : DEFAULT_INSTRUCTIONS;
-  },
+  instructions: resolveInstructions,
   model: async () => {
-    const model = getConfig().llmModel || 'albert-large';
+    const model = (await getConfig()).llmModel || 'albert-large';
     return `albert/albert/${model}` as any;
   },
   tools: { searchTool, rerankTool },

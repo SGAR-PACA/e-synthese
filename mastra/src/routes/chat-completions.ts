@@ -3,13 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { getConfig } from '../lib/config.js';
 import { requireApiKey } from '../lib/middleware.js';
 import { getProxyApiKey } from '../lib/api-key.js';
-import { ragAgent } from '../mastra/agents/rag-agent.js';
+import { scoreRun } from '../mastra/scorers/run.js';
+import type { AppConfig } from '../lib/config.js';
 
 const MAX_TOKENS_CAP = 4096;
 
 getProxyApiKey();
 
-type OpenAIMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string };
+// Union discriminée (un membre par rôle) pour rester assignable au type de
+// messages attendu par l'agent Mastra (`MessageListInput`), sans cast `as any`.
+type OpenAIMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string };
 
 export const chatCompletionsRoute = [
   registerApiRoute('/v1/chat/completions', {
@@ -43,7 +49,7 @@ export const chatCompletionsRoute = [
         return c.json({ error: 'messages is required and must contain at least one non-placeholder message' }, 400);
       }
 
-      const modelOptions: Record<string, unknown> = {};
+      const modelOptions: { temperature?: number; maxOutputTokens?: number } = {};
       if (temperature !== undefined) modelOptions.temperature = temperature;
       if (max_tokens !== undefined) {
         const parsed = Number(max_tokens);
@@ -52,14 +58,20 @@ export const chatCompletionsRoute = [
         }
       }
 
-      const config = getConfig();
+      const config = await getConfig();
       const modelId = `albert/albert/${config.llmModel || 'albert-large'}`;
 
+      // Résolution de l'agent via le registre de l'instance Mastra (issue #8),
+      // au lieu d'un import direct du module. La route dépend ainsi de
+      // l'instance — point d'entrée du storage, des traces et des scorers.
+      const ragAgent = c.get('mastra').getAgent('ragAgent');
+
       if (stream) {
-        const result = await (ragAgent as any).stream(cleanedMessages, {
+        const result = await ragAgent.stream(cleanedMessages, {
           modelSettings: modelOptions,
         });
         const sseStream = toOpenAISSE(result, config.llmModel || 'albert-large');
+        maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
         return new Response(sseStream, {
           headers: {
             'Content-Type': 'text/event-stream',
@@ -69,9 +81,11 @@ export const chatCompletionsRoute = [
         });
       }
 
-      const result = await (ragAgent as any).generate(cleanedMessages, {
+      const result = await ragAgent.generate(cleanedMessages, {
         modelSettings: modelOptions,
       });
+
+      maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
 
       const openAIResponse = {
         id: `chatcmpl-${randomUUID()}`,
@@ -122,6 +136,33 @@ function createBracketStripper(): (delta: string) => string {
     }
     return out;
   };
+}
+
+// Dernier message utilisateur (la question à noter).
+function lastUserText(messages: OpenAIMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content;
+  }
+  return '';
+}
+
+// Texte final de la réponse : string en non-stream, promesse en stream.
+async function resolveAnswerText(result: any): Promise<string> {
+  const t = result?.text;
+  if (typeof t === 'string') return t;
+  if (t && typeof t.then === 'function') return (await t) ?? '';
+  return '';
+}
+
+// Notation LIVE : échantillonnée, détachée, JAMAIS bloquante ni propagatrice d'erreur.
+function maybeScoreLive(messages: OpenAIMessage[], result: any, config: AppConfig, genModel: string): void {
+  if (Math.random() >= (config.evalSamplingRate ?? 0)) return;
+  void (async () => {
+    const question = lastUserText(messages);
+    const answer = stripCitationBrackets(await resolveAnswerText(result));
+    if (!question || !answer) return;
+    await scoreRun({ question, answer, agentResult: result, source: 'live', genModel });
+  })().catch((err) => console.error('[eval] scoring live échoué:', err?.message || err));
 }
 
 function toOpenAISSE(agentStream: any, model: string): ReadableStream<Uint8Array> {

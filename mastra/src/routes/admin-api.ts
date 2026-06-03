@@ -5,16 +5,17 @@ import { getConfig, updateConfig, initConfigFromEnv } from '../lib/config.js';
 import { requireAuth, requireAdmin, verifyCsrf, getAuth, getClientIp } from '../lib/middleware.js';
 import { validatePassword } from '../lib/crypto.js';
 import * as albert from '../lib/albert-client.js';
+import { scoreRun } from '../mastra/scorers/run.js';
 
-initConfigFromEnv();
+await initConfigFromEnv();
 
 export const adminApiRoute = [
   registerApiRoute('/admin/auth-status', {
     method: 'GET',
     handler: async (c) => {
-      const authCtx = getAuth(c);
+      const authCtx = await getAuth(c);
       return c.json({
-        isSetup: auth.isSetup(),
+        isSetup: await auth.isSetup(),
         isAuthenticated: !!authCtx,
         role: authCtx?.user.role ?? null,
       });
@@ -24,7 +25,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/setup', {
     method: 'POST',
     handler: async (c) => {
-      if (auth.isSetup()) {
+      if (await auth.isSetup()) {
         return c.json({ error: 'Admin already configured' }, 403);
       }
       const { email, password } = await c.req.json();
@@ -36,16 +37,16 @@ export const adminApiRoute = [
         return c.json({ error: pwError }, 400);
       }
 
-      const { recoveryCode } = auth.setupAdmin(email, password);
+      const { recoveryCode } = await auth.setupAdmin(email, password);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'SETUP', undefined, 'First admin created');
+      await db.logAudit(ip, 'SETUP', undefined, 'First admin created');
 
-      const loginResult = auth.login(email, password);
+      const loginResult = await auth.login(email, password);
       if (!loginResult) {
         return c.json({ ok: true, recoveryCode, csrfToken: null });
       }
 
-      db.logAudit(ip, 'LOGIN_SUCCESS', loginResult.user.id);
+      await db.logAudit(ip, 'LOGIN_SUCCESS', loginResult.user.id);
 
       return new Response(JSON.stringify({ ok: true, recoveryCode, csrfToken: loginResult.csrfToken }), {
         status: 200,
@@ -67,15 +68,15 @@ export const adminApiRoute = [
       }
 
       const { email, password } = await c.req.json();
-      const loginResult = auth.login(email, password);
+      const loginResult = await auth.login(email, password);
       if (!loginResult) {
         auth.recordFailedAttempt(`login:${ip}`, 5);
-        db.logAudit(ip, 'LOGIN_FAILED', undefined, email);
+        await db.logAudit(ip, 'LOGIN_FAILED', undefined, email);
         return c.json({ error: 'Invalid credentials' }, 401);
       }
 
       auth.resetRateLimit(`login:${ip}`);
-      db.logAudit(ip, 'LOGIN_SUCCESS', loginResult.user.id);
+      await db.logAudit(ip, 'LOGIN_SUCCESS', loginResult.user.id);
 
       return new Response(JSON.stringify({ ok: true, csrfToken: loginResult.csrfToken, role: loginResult.user.role }), {
         status: 200,
@@ -105,14 +106,14 @@ export const adminApiRoute = [
         return c.json({ error: pwError }, 400);
       }
 
-      const result = auth.register(email, password, inviteCode);
+      const result = await auth.register(email, password, inviteCode);
       if ('error' in result) {
         auth.recordFailedAttempt(`register:${ip}`, 3);
         return c.json({ error: result.error }, 400);
       }
 
       auth.resetRateLimit(`register:${ip}`);
-      db.logAudit(ip, 'REGISTER', result.userId, email);
+      await db.logAudit(ip, 'REGISTER', result.userId, email);
 
       return c.json({ recoveryCode: result.recoveryCode });
     },
@@ -136,15 +137,15 @@ export const adminApiRoute = [
         return c.json({ error: pwError }, 400);
       }
 
-      const result = auth.forgotPassword(email, recoveryCode, newPassword);
+      const result = await auth.forgotPassword(email, recoveryCode, newPassword);
       if ('error' in result) {
         auth.recordFailedAttempt(`forgot:${ip}`, 3);
-        db.logAudit(ip, 'FORGOT_PASSWORD_FAILED', undefined, email);
+        await db.logAudit(ip, 'FORGOT_PASSWORD_FAILED', undefined, email);
         return c.json({ error: result.error }, 400);
       }
 
       auth.resetRateLimit(`forgot:${ip}`);
-      db.logAudit(ip, 'FORGOT_PASSWORD_SUCCESS', undefined, email);
+      await db.logAudit(ip, 'FORGOT_PASSWORD_SUCCESS', undefined, email);
 
       return c.json({ recoveryCode: result.recoveryCode });
     },
@@ -162,13 +163,13 @@ export const adminApiRoute = [
         return c.json({ error: pwError }, 400);
       }
 
-      const result = auth.executeForceReset(token, newPassword);
+      const result = await auth.executeForceReset(token, newPassword);
       if ('error' in result) {
         return c.json({ error: result.error }, 400);
       }
 
       const ip = getClientIp(c);
-      db.logAudit(ip, 'RESET_PASSWORD', undefined, 'Via token link');
+      await db.logAudit(ip, 'RESET_PASSWORD', undefined, 'Via token link');
 
       return c.json({ recoveryCode: result.recoveryCode });
     },
@@ -179,11 +180,11 @@ export const adminApiRoute = [
     handler: async (c) => {
       const token = auth.parseSessionCookie(c.req.header('cookie'));
       if (token) {
-        const session = auth.validateSession(token);
+        const session = await auth.validateSession(token);
         if (session) {
-          db.logAudit(getClientIp(c), 'LOGOUT', session.user.id);
+          await db.logAudit(getClientIp(c), 'LOGOUT', session.user.id);
         }
-        auth.logout(token);
+        await auth.logout(token);
       }
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -198,11 +199,11 @@ export const adminApiRoute = [
   registerApiRoute('/admin/me', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAuth(c);
+      const authResult = await requireAuth(c);
       if (authResult instanceof Response) return authResult;
       const collections = authResult.user.role === 'admin'
         ? []
-        : db.getUserCollections(authResult.user.id);
+        : await db.getUserCollections(authResult.user.id);
       return c.json({
         id: authResult.user.id,
         email: authResult.user.email,
@@ -215,7 +216,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/change-password', {
     method: 'PUT',
     handler: async (c) => {
-      const authResult = requireAuth(c);
+      const authResult = await requireAuth(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -229,13 +230,13 @@ export const adminApiRoute = [
         return c.json({ error: pwError }, 400);
       }
 
-      const result = auth.changePassword(authResult.user.id, currentPassword, newPassword);
+      const result = await auth.changePassword(authResult.user.id, currentPassword, newPassword);
       if ('error' in result) {
         return c.json({ error: result.error }, 400);
       }
 
       const ip = getClientIp(c);
-      db.logAudit(ip, 'CHANGE_PASSWORD', authResult.user.id);
+      await db.logAudit(ip, 'CHANGE_PASSWORD', authResult.user.id);
 
       return c.json({ recoveryCode: result.recoveryCode });
     },
@@ -244,7 +245,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/test-pipeline', {
     method: 'POST',
     handler: async (c) => {
-      const authResult = requireAuth(c);
+      const authResult = await requireAuth(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -254,7 +255,7 @@ export const adminApiRoute = [
         return c.json({ error: 'query is required' }, 400);
       }
 
-      const config = getConfig();
+      const config = await getConfig();
       const ip = getClientIp(c);
 
       const collections = authResult.user.role === 'admin'
@@ -325,6 +326,7 @@ export const adminApiRoute = [
         contextChunks: chunks.length,
       });
 
+      let answer = '';
       try {
         const chatResponse = await albert.chatCompletions({
           model: config.llmModel,
@@ -335,16 +337,33 @@ export const adminApiRoute = [
           stream: false,
         });
         const chatData = await chatResponse.json();
+        answer = chatData.choices?.[0]?.message?.content || '';
         steps.push({
           step: 'llm',
           status: 'ok',
-          response: chatData.choices?.[0]?.message?.content || '',
+          response: answer,
         });
       } catch (err: any) {
         steps.push({ step: 'llm', status: 'error', error: err.message });
       }
 
-      db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}" collections=[${collections}]`);
+      await db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}" collections=[${collections}]`);
+
+      // Notation Mastra du test (fire-and-forget) → apparaît dans /admin/eval (source 'test').
+      // Ne bloque pas la réponse du test ; les 4 juges tournent en arrière-plan (~30 s).
+      if (answer) {
+        const usedChunks = chunks.map((r: any) => {
+          const md = r.chunk?.metadata || {};
+          return {
+            name: md.document_name || md.name || md.title || md.filename || '',
+            content: r.chunk?.content || r.content || '',
+            score: r.score ?? 0,
+            url: md.directory_url || md.url || md.source_url || '',
+          };
+        });
+        void scoreRun({ question: query, answer, usedChunks, source: 'test', genModel: config.llmModel })
+          .catch((e: any) => console.error('[eval] scoring test-pipeline échoué:', e?.message || e));
+      }
 
       return c.json({ query, steps });
     },
@@ -353,10 +372,10 @@ export const adminApiRoute = [
   registerApiRoute('/admin/config', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
 
-      const config = getConfig();
+      const config = await getConfig();
       const masked = {
         ...config,
         albertApiKey: config.albertApiKey
@@ -370,7 +389,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/config', {
     method: 'PUT',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -391,8 +410,8 @@ export const adminApiRoute = [
         return c.json({ error: 'No valid fields to update' }, 400);
       }
 
-      updateConfig(updates);
-      db.logAudit(ip, 'CONFIG_UPDATED', authResult.user.id, `Fields: ${Object.keys(updates).join(', ')}`);
+      await updateConfig(updates);
+      await db.logAudit(ip, 'CONFIG_UPDATED', authResult.user.id, `Fields: ${Object.keys(updates).join(', ')}`);
 
       return c.json({ ok: true });
     },
@@ -401,10 +420,10 @@ export const adminApiRoute = [
   registerApiRoute('/admin/status', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
 
-      const config = getConfig();
+      const config = await getConfig();
       let albertStatus = 'unknown';
       let albertModels: string[] = [];
       try {
@@ -429,16 +448,17 @@ export const adminApiRoute = [
   registerApiRoute('/admin/users', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
 
-      const users = db.listUsers().map((u) => ({
+      const userList = await db.listUsers();
+      const users = await Promise.all(userList.map(async (u) => ({
         id: u.id,
         email: u.email,
         role: u.role,
         createdAt: u.created_at,
-        collections: db.getUserCollections(u.id),
-      }));
+        collections: await db.getUserCollections(u.id),
+      })));
       return c.json(users);
     },
   }),
@@ -446,7 +466,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/users/:id', {
     method: 'DELETE',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -459,14 +479,14 @@ export const adminApiRoute = [
         return c.json({ error: 'Cannot delete yourself' }, 400);
       }
 
-      const target = db.findUserById(userId);
+      const target = await db.findUserById(userId);
       if (!target) {
         return c.json({ error: 'User not found' }, 404);
       }
 
-      db.deleteUser(userId);
+      await db.deleteUser(userId);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'USER_DELETED', authResult.user.id, `Deleted user ${target.email} (id=${userId})`);
+      await db.logAudit(ip, 'USER_DELETED', authResult.user.id, `Deleted user ${target.email} (id=${userId})`);
 
       return c.json({ ok: true });
     },
@@ -475,7 +495,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/users/:id/force-reset', {
     method: 'POST',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -485,14 +505,14 @@ export const adminApiRoute = [
         return c.json({ error: 'Invalid user ID' }, 400);
       }
 
-      const target = db.findUserById(userId);
+      const target = await db.findUserById(userId);
       if (!target) {
         return c.json({ error: 'User not found' }, 404);
       }
 
-      const resetToken = auth.createForceReset(userId);
+      const resetToken = await auth.createForceReset(userId);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'FORCE_RESET_CREATED', authResult.user.id, `For user ${target.email} (id=${userId})`);
+      await db.logAudit(ip, 'FORCE_RESET_CREATED', authResult.user.id, `For user ${target.email} (id=${userId})`);
 
       const resetLink = `/admin/reset-password?token=${resetToken}`;
       return c.json({ resetLink, token: resetToken });
@@ -502,7 +522,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/users/:id/revoke-sessions', {
     method: 'POST',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -512,14 +532,14 @@ export const adminApiRoute = [
         return c.json({ error: 'Invalid user ID' }, 400);
       }
 
-      const target = db.findUserById(userId);
+      const target = await db.findUserById(userId);
       if (!target) {
         return c.json({ error: 'User not found' }, 404);
       }
 
-      db.deleteUserSessions(userId);
+      await db.deleteUserSessions(userId);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'SESSIONS_REVOKED', authResult.user.id, `For user ${target.email} (id=${userId})`);
+      await db.logAudit(ip, 'SESSIONS_REVOKED', authResult.user.id, `For user ${target.email} (id=${userId})`);
 
       return c.json({ ok: true });
     },
@@ -528,10 +548,10 @@ export const adminApiRoute = [
   registerApiRoute('/admin/invitations', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
 
-      const invitations = db.listInvitations();
+      const invitations = await db.listInvitations();
       return c.json(invitations);
     },
   }),
@@ -539,7 +559,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/invitations', {
     method: 'POST',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -549,9 +569,9 @@ export const adminApiRoute = [
         return c.json({ error: 'collections (array) and durationDays (>= 1) are required' }, 400);
       }
 
-      const code = auth.createInvitation(authResult.user.id, collections, durationDays);
+      const code = await auth.createInvitation(authResult.user.id, collections, durationDays);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'INVITATION_CREATED', authResult.user.id, `collections=[${collections}] duration=${durationDays}d`);
+      await db.logAudit(ip, 'INVITATION_CREATED', authResult.user.id, `collections=[${collections}] duration=${durationDays}d`);
 
       return c.json({ inviteCode: code });
     },
@@ -560,7 +580,7 @@ export const adminApiRoute = [
   registerApiRoute('/admin/invitations/:id', {
     method: 'DELETE',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
@@ -570,9 +590,9 @@ export const adminApiRoute = [
         return c.json({ error: 'Invalid invitation ID' }, 400);
       }
 
-      db.deleteInvitation(invitationId);
+      await db.deleteInvitation(invitationId);
       const ip = getClientIp(c);
-      db.logAudit(ip, 'INVITATION_DELETED', authResult.user.id, `id=${invitationId}`);
+      await db.logAudit(ip, 'INVITATION_DELETED', authResult.user.id, `id=${invitationId}`);
 
       return c.json({ ok: true });
     },
@@ -581,11 +601,11 @@ export const adminApiRoute = [
   registerApiRoute('/admin/audit', {
     method: 'GET',
     handler: async (c) => {
-      const authResult = requireAdmin(c);
+      const authResult = await requireAdmin(c);
       if (authResult instanceof Response) return authResult;
 
       const limit = parseInt(c.req.query('limit') || '100', 10);
-      return c.json(db.getAuditLog(limit));
+      return c.json(await db.getAuditLog(limit));
     },
   }),
 ];

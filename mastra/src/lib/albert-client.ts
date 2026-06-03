@@ -3,9 +3,10 @@ import { getConfig } from './config.js';
 const ALBERT_TIMEOUT_MS = 120_000;
 
 async function albertFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const url = `${getConfig().albertApiBaseUrl}${path}`;
+  const config = await getConfig();
+  const url = `${config.albertApiBaseUrl}${path}`;
   const headers = new Headers(options.headers);
-  headers.set('Authorization', `Bearer ${getConfig().albertApiKey}`);
+  headers.set('Authorization', `Bearer ${config.albertApiKey}`);
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');

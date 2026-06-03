@@ -1,0 +1,22 @@
+# Sauvegarde quotidienne pg_dump → Scaleway Object Storage.
+# Config non-secrète, versionnée dans git.
+# Les secrets (clés IAM Scaleway) sont définis dans Dokploy
+# (BACKUP_S3_ACCESS_KEY, BACKUP_S3_SECRET_KEY).
+
+BACKUP_S3_ENDPOINT=https://s3.fr-par.scw.cloud
+BACKUP_S3_REGION=fr-par
+BACKUP_S3_BUCKET=e-synthese-backups
+BACKUP_RETENTION_DAYS=30
+
+# Hôtes Postgres internes au réseau Docker (résolution par nom de service).
+MASTRA_DB_HOST=mastra_postgresql
+MASTRA_DB_USER=mastra
+MASTRA_DB_NAME=mastra
+
+CONVERSATIONS_DB_HOST=postgresql
+CONVERSATIONS_DB_USER=conversations
+CONVERSATIONS_DB_NAME=conversations
+
+KEYCLOAK_DB_HOST=kc_postgresql
+KEYCLOAK_DB_USER=keycloak
+KEYCLOAK_DB_NAME=keycloak

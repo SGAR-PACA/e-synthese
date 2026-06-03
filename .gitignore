@@ -23,3 +23,7 @@ data/
 .idea/
 *.log
 .playwright-mcp/
+
+# Artefacts générés par les skills / assistants IA (régénérables, hors versioning)
+docs/superpowers/
+.claude/

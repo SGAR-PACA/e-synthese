@@ -8,23 +8,23 @@ export interface AuthContext {
   collections: number[];
 }
 
-export function getAuth(c: any): AuthContext | null {
+export async function getAuth(c: any): Promise<AuthContext | null> {
   const token = parseSessionCookie(c.req.header('cookie'));
   if (!token) return null;
-  const session = validateSession(token);
+  const session = await validateSession(token);
   if (!session) return null;
-  const collections = session.user.role === 'admin' ? [] : getUserCollections(session.user.id);
+  const collections = session.user.role === 'admin' ? [] : await getUserCollections(session.user.id);
   return { user: session.user, csrfToken: session.csrfToken, collections };
 }
 
-export function requireAuth(c: any): AuthContext | Response {
-  const auth = getAuth(c);
+export async function requireAuth(c: any): Promise<AuthContext | Response> {
+  const auth = await getAuth(c);
   if (!auth) return c.json({ error: 'Unauthorized' }, 401);
   return auth;
 }
 
-export function requireAdmin(c: any): AuthContext | Response {
-  const auth = getAuth(c);
+export async function requireAdmin(c: any): Promise<AuthContext | Response> {
+  const auth = await getAuth(c);
   if (!auth) return c.json({ error: 'Unauthorized' }, 401);
   if (auth.user.role !== 'admin') return c.json({ error: 'Forbidden' }, 403);
   return auth;

@@ -8,8 +8,8 @@ export class AlbertGateway extends MastraModelGateway {
   readonly id = 'albert';
   readonly name = 'Albert API (etalab)';
 
-  private getBaseUrl(): string {
-    const raw = getConfig().albertApiBaseUrl || DEFAULT_BASE_URL;
+  private async getBaseUrl(): Promise<string> {
+    const raw = (await getConfig()).albertApiBaseUrl || DEFAULT_BASE_URL;
     return raw.endsWith('/v1') ? raw : `${raw.replace(/\/$/, '')}/v1`;
   }
 
@@ -25,18 +25,18 @@ export class AlbertGateway extends MastraModelGateway {
         ],
         apiKeyEnvVar: 'ALBERT_API_KEY',
         gateway: this.id,
-        url: this.getBaseUrl(),
+        url: await this.getBaseUrl(),
         docUrl: 'https://albert.api.etalab.gouv.fr/documentation',
       },
     };
   }
 
-  buildUrl(): string {
+  async buildUrl(): Promise<string> {
     return this.getBaseUrl();
   }
 
   async getApiKey(): Promise<string> {
-    const key = getConfig().albertApiKey || process.env.ALBERT_API_KEY;
+    const key = (await getConfig()).albertApiKey || process.env.ALBERT_API_KEY;
     if (!key) {
       throw new Error('Albert API key is not configured (set ALBERT_API_KEY or via admin panel).');
     }
@@ -57,7 +57,7 @@ export class AlbertGateway extends MastraModelGateway {
     const model = createOpenAICompatible({
       name: providerId,
       apiKey,
-      baseURL: this.getBaseUrl(),
+      baseURL: await this.getBaseUrl(),
       headers,
     }).chatModel(modelId);
     return model as unknown as GatewayLanguageModel;
@@ -77,7 +77,7 @@ export class AlbertGateway extends MastraModelGateway {
     return createOpenAICompatible({
       name: providerId,
       apiKey,
-      baseURL: this.getBaseUrl(),
+      baseURL: await this.getBaseUrl(),
       headers,
     }).textEmbeddingModel(modelId);
   }

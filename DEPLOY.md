@@ -152,6 +152,7 @@ Dans **Application → Environment** : coller chaque variable de `.env.example.p
 | `DJANGO_SECRET_KEY` | `openssl rand -hex 50` |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
 | `KC_DB_PASSWORD` | `openssl rand -hex 32` |
+| `MASTRA_DB_PASSWORD` | `openssl rand -hex 32` |
 | `KEYCLOAK_ADMIN_PASSWORD` | `openssl rand -hex 16` (à mémoriser) |
 | `OIDC_RP_CLIENT_SECRET` | Provisoire `openssl rand -hex 32` — sera **régénéré** à l'étape 9 |
 | `AWS_S3_SECRET_ACCESS_KEY` | `openssl rand -hex 32` |
@@ -165,7 +166,7 @@ Dans **Application → Environment** : coller chaque variable de `.env.example.p
 
 Avant de cliquer **Save** dans Dokploy, **stocke aussi tous ces secrets dans un coffre-fort** (Bitwarden, 1Password, fichier chiffré KeePass, etc.).
 
-> ⚠️ **Si tu perds `ENCRYPTION_KEY`**, les secrets stockés dans la base SQLite Mastra deviennent illisibles définitivement. Pas de récupération possible.
+> ⚠️ **Si tu perds `ENCRYPTION_KEY`**, les secrets stockés dans la base PostgreSQL Mastra deviennent illisibles définitivement. Pas de récupération possible.
 
 Une fois tout collé, cliquer **Save**.
 
@@ -269,34 +270,87 @@ Pour redéployer manuellement : **Deployments → Deploy**.
 - **UI Dokploy** : onglet **Logs** par service (interface graphique).
 - **SSH** : `docker logs -f <nom-conteneur>` (équivalent en ligne de commande).
 
-### Backups
+### Sauvegardes
 
-Les données critiques vivent dans **6 volumes Docker nommés** :
+Les 3 bases PostgreSQL sont sauvegardées **chaque jour** vers un bucket
+Scaleway Object Storage par le service `mastra_backup` du `compose.yml`. Les
+dumps sont gardés **30 jours**, puis purgés automatiquement.
 
-| Volume | Contenu |
+| Base | Service Postgres | Bucket path |
+|---|---|---|
+| `mastra` | `mastra_postgresql` | `s3://e-synthese-backups/mastra/YYYY-MM-DD.sql.gz` |
+| `conversations` | `postgresql` | `s3://e-synthese-backups/conversations/YYYY-MM-DD.sql.gz` |
+| `keycloak` | `kc_postgresql` | `s3://e-synthese-backups/keycloak/YYYY-MM-DD.sql.gz` |
+
+#### 1. Création du bucket Scaleway (premier déploiement)
+
+1. Console Scaleway → **Object Storage** → **Create bucket**.
+2. Région : `fr-par` (Paris). Zone : par défaut.
+3. Nom : `e-synthese-backups`.
+4. Visibility : **Private** (pas listable publiquement).
+5. Valider.
+
+#### 2. Création de la clé d'API IAM dédiée au backup
+
+1. Console Scaleway → **IAM** → **API keys** → **Generate API key**.
+2. Application : créer une application dédiée `e-synthese-backup` (ou utiliser une application existante avec un scope restreint).
+3. Préférences : générer une `Access key` et une `Secret key`. **Copier les deux valeurs immédiatement** — la secret key n'est plus affichée ensuite.
+4. Permissions / Policy : attacher une policy `ObjectStorageFullAccess` **restreinte au bucket `e-synthese-backups` uniquement** (pas le compte entier). Si la console ne permet qu'un scope par défaut, utiliser une policy custom au format Scaleway IAM.
+
+#### 3. Variables à coller dans Dokploy
+
+| Variable | Valeur |
 |---|---|
-| `postgres_data` | Base Conversations (chats, users) |
-| `kc_postgres_data` | Base Keycloak (auth) |
-| `mastra_data` | Base Mastra (admins, secrets chiffrés) |
-| `keycloak_data` | Configuration Keycloak |
-| `minio_data` | Pièces jointes uploadées |
-| `redis_data` | Cache (recréable, optionnel) |
+| `BACKUP_S3_ACCESS_KEY` | Access key générée à l'étape 2 |
+| `BACKUP_S3_SECRET_KEY` | Secret key générée à l'étape 2 |
 
-Snapshot quotidien recommandé (à mettre dans un cron sur le serveur) :
+Ces 2 variables sont déjà déclarées dans `.env.example.prod`. Le reste de la config backup (`BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, hôtes des bases…) est versionné dans `front-back/env.d/production/backup`.
+
+#### 4. Vérification post-déploiement
+
+Au démarrage, `mastra_backup` réalise un premier cycle. Vérifier :
 
 ```bash
-mkdir -p /backups
-for vol in postgres_data kc_postgres_data mastra_data keycloak_data minio_data; do
-  docker run --rm \
-    -v <projet-dokploy>_${vol}:/data \
-    -v /backups:/backup \
-    alpine tar czf /backup/${vol}-$(date +%F).tar.gz -C / data
-done
-# Conserver 30 jours
-find /backups -name "*.tar.gz" -mtime +30 -delete
+docker compose logs mastra_backup | tail -30
 ```
 
-> Le nom du préfixe `<projet-dokploy>_` est visible avec `docker volume ls`.
+On doit voir, séquentiellement :
+- `configuring mc alias scw → https://s3.fr-par.scw.cloud`
+- `dump mastra start ... dump mastra uploaded ...`
+- `dump conversations start ... uploaded ...`
+- `dump keycloak start ... uploaded ...`
+- `===== backup cycle done =====`
+- `sleeping 86400s before next cycle`
+
+Puis dans la console Scaleway → bucket `e-synthese-backups` : 3 fichiers `.sql.gz` apparaissent (un par base).
+
+#### 5. Procédure de restauration manuelle
+
+Pour restaurer une base à partir d'un dump :
+
+```bash
+# 1. Télécharger le dump voulu depuis la console Scaleway (ou via mc localement).
+mc cp scw/e-synthese-backups/mastra/2026-05-20.sql.gz /tmp/restore.sql.gz
+
+# 2. Décompresser et restaurer dans la base correspondante.
+gunzip -c /tmp/restore.sql.gz | docker compose exec -T mastra_postgresql \
+  psql -U mastra -d mastra
+
+# Pour Conversations : remplacer mastra_postgresql/mastra/mastra par postgresql/conversations/conversations.
+# Pour Keycloak : remplacer par kc_postgresql/keycloak/keycloak.
+```
+
+> ⚠️ **Restauration Keycloak** : arrêter le service `keycloak` avant restore (`docker compose stop keycloak`), restaurer, puis relancer (`docker compose start keycloak`). Sinon Keycloak peut tenir des verrous sur certaines tables.
+
+> ⚠️ **`ENCRYPTION_KEY`** : les valeurs de la table `config` dans la base `mastra` (notamment `albertApiKey`) sont chiffrées avec `ENCRYPTION_KEY`. Si on restaure un dump sur un environnement avec une `ENCRYPTION_KEY` différente, ces valeurs deviennent illisibles. Conserver la même clé.
+
+#### 6. Rotation périodique des clés IAM backup
+
+Tous les 6 mois recommandés :
+1. Générer une nouvelle clé IAM dans Scaleway.
+2. Coller dans Dokploy.
+3. Redeploy.
+4. Supprimer l'ancienne clé dans Scaleway.
 
 ### Mise à jour
 
@@ -313,13 +367,12 @@ git push origin main
 Procédure portable, ~1 heure :
 
 1. Installer Dokploy sur le nouveau serveur.
-2. Backup les 6 volumes (commande ci-dessus) depuis l'ancien serveur, copier les `.tar.gz` sur le nouveau.
-3. Restorer les volumes : `tar xzf … -C /` dans des volumes Docker du nouveau serveur.
-4. Mettre à jour les DNS (`DOMAIN_FRONT` et `DOMAIN_AUTH`) vers la nouvelle IP.
-5. Sur le nouveau Dokploy : créer la même application, coller les **mêmes** variables d'env (récupérées du coffre-fort).
-6. Deploy.
+2. Sur le nouveau Dokploy : créer la même application, coller les **mêmes** variables d'env (récupérées du coffre-fort), notamment `BACKUP_S3_ACCESS_KEY`/`BACKUP_S3_SECRET_KEY` et **la même `ENCRYPTION_KEY`** (sinon les secrets chiffrés de la base `mastra` deviendront illisibles).
+3. Deploy. Le service `mastra_backup` se reconnecte au bucket Scaleway existant.
+4. Restaurer les 3 bases depuis le dernier dump disponible dans `s3://e-synthese-backups/<base>/` — voir la procédure de restauration manuelle ci-dessus (étape 5 de la section Sauvegardes).
+5. Mettre à jour les DNS (`DOMAIN_FRONT` et `DOMAIN_AUTH`) vers la nouvelle IP.
 
-Aucune modification de code ni de config nécessaire.
+Le volume `minio_data` (pièces jointes Conversations) n'est pas couvert par les sauvegardes S3 actuelles — à copier manuellement (`docker run --rm -v minio_data:/data alpine tar czf - -C / data` côté ancien, scp, puis détar côté nouveau) si les pièces jointes existantes doivent être préservées.
 
 ### Rotation de la `PROXY_API_KEY`
 
@@ -331,13 +384,13 @@ L'ancienne clé est immédiatement invalidée (pas de période de grâce). Le `l
 
 ### Rotation de l'`ENCRYPTION_KEY` (opération délicate)
 
-⚠️ **Ne jamais faire à la légère** : la clé chiffre les secrets en base SQLite Mastra. Si tu changes la clé sans précaution, tous les secrets stockés (clé Albert, etc.) deviennent illisibles.
+⚠️ **Ne jamais faire à la légère** : la clé chiffre les secrets en base PostgreSQL Mastra. Si tu changes la clé sans précaution, tous les secrets stockés (clé Albert, etc.) deviennent illisibles.
 
 Procédure :
 
 1. Récupérer chaque secret en clair depuis l'admin Mastra (`https://esynthese.ton-domaine.fr/admin/settings`).
 2. Stopper le service mastra : Dokploy → mastra → Stop.
-3. SSH + `docker exec mastra sqlite3 /data/data.db "DELETE FROM config WHERE key='albertApiKey';"`.
+3. SSH + `docker exec mastra_postgresql psql -U mastra -d mastra -c "DELETE FROM config WHERE key='albertApiKey';"`.
 4. Dokploy → Environment → mettre à jour `ENCRYPTION_KEY` avec la nouvelle valeur.
 5. Save → Redeploy.
 6. Re-saisir les secrets dans l'admin Mastra — ils seront re-chiffrés avec la nouvelle clé.
