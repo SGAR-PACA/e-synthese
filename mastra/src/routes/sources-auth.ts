@@ -96,15 +96,4 @@ export const sourcesAuthRoute = [
       }
     },
   }),
-  // Route de vérification (sera remplacée par la visionneuse en Plan 4).
-  ...(process.env.NODE_ENV !== 'production'
-    ? [registerApiRoute('/v1/source/_authcheck', {
-        method: 'GET',
-        handler: async (c) => {
-          const session = await requireSourceSession(c);
-          if (session instanceof Response) return session;
-          return c.json({ sub: session.sub });
-        },
-      })]
-    : []),
 ];

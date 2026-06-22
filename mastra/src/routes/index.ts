@@ -7,3 +7,4 @@ export { adminApiRoute } from './admin-api';
 export { adminUiRoute } from './admin-ui';
 export { scoresRoute } from './scores';
 export { sourcesAuthRoute } from './sources-auth';
+export { sourcesRoute, sourcesAssetsRoute } from './sources';

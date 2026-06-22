@@ -49,6 +49,18 @@ services:
       - S3_DOCS_BUCKET=${S3_DOCS_BUCKET:-}
       - S3_DOCS_ACCESS_KEY=${S3_DOCS_ACCESS_KEY:-}
       - S3_DOCS_SECRET_KEY=${S3_DOCS_SECRET_KEY:-}
+      # --- Auth visionneuse de sources (OIDC + clés HMAC) — valeurs renseignées dans Dokploy ---
+      # ISSUER / REDIRECT_URI dépendent du domaine : à renseigner en entier dans Dokploy, ex :
+      #   MASTRA_OIDC_ISSUER=https://<DOMAIN_FRONT>/auth/realms/conversations
+      #   MASTRA_OIDC_REDIRECT_URI=https://<DOMAIN_FRONT>/v1/source/callback
+      # Tant que MASTRA_SOURCE_LINK_KEY est vide, aucun lien de source n'est généré (dégradation douce).
+      - MASTRA_OIDC_ISSUER=${MASTRA_OIDC_ISSUER:-}
+      - MASTRA_OIDC_INTERNAL_URL=${MASTRA_OIDC_INTERNAL_URL:-http://keycloak:8080/auth/realms/conversations}
+      - MASTRA_OIDC_CLIENT_ID=${MASTRA_OIDC_CLIENT_ID:-mastra-sources}
+      - MASTRA_OIDC_CLIENT_SECRET=${MASTRA_OIDC_CLIENT_SECRET:-}
+      - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-}
+      - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:-}
+      - MASTRA_SOURCE_LINK_KEY=${MASTRA_SOURCE_LINK_KEY:-}
     mem_limit: 2g
     depends_on:
       mastra_postgresql:

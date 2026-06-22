@@ -1,0 +1,11 @@
+/* mastra/public/source/viewer.css */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #525659; color: #eee; }
+header { padding: .75rem 1rem; background: #323639; position: sticky; top: 0; z-index: 10; font-size: .95rem; }
+#notice { background: #6b5d2f; color: #fff; padding: .5rem 1rem; font-size: .9rem; }
+#notice ul { margin: .3rem 0 0; padding-left: 1.2rem; }
+main { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding: 1rem; }
+.page { position: relative; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+.page canvas { display: block; }
+.hl { position: absolute; background: rgba(255, 221, 0, .38); mix-blend-mode: multiply; pointer-events: none; }
+.hl.target { outline: 2px solid rgba(255,170,0,.9); }
