@@ -6,3 +6,4 @@ export { modelsRoute } from './models';
 export { adminApiRoute } from './admin-api';
 export { adminUiRoute } from './admin-ui';
 export { scoresRoute } from './scores';
+export { sourcesAuthRoute } from './sources-auth';
