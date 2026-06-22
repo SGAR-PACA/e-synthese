@@ -1,0 +1,154 @@
+import { expect, test } from '@playwright/test';
+
+import { createProject } from '../helpers';
+
+import { randomName } from './common';
+
+test.describe('Left panel desktop', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  // Delete every project this browser's e2e tests have created so the next
+  // test (and the next in-band run) starts from a clean panel. The dev DB is
+  // shared across runs; without this, the projects list paginates and a
+  // freshly-created project can land past the first page.
+  //
+  // `title` is an icontains filter (TitleSearchFilter), and storageState is
+  // per-browser, so only this browser-user's e2e artifacts are touched.
+  test.afterEach(async ({ request, browserName }) => {
+    const response = await request.get('/api/v1.0/projects/', {
+      params: { title: `${browserName}-`, page_size: 200 },
+    });
+    if (!response.ok()) return;
+    const body = (await response.json()) as {
+      results?: Array<{ id: string; title: string }>;
+    };
+    const prefix = new RegExp(`^${browserName}-\\d+-\\d+-`);
+    for (const project of body.results ?? []) {
+      if (!prefix.test(project.title)) continue;
+      await request.delete(`/api/v1.0/projects/${project.id}/`);
+    }
+  });
+
+  test('checks all the elements are visible', async ({ page }) => {
+    await expect(page.getByTestId('left-panel-desktop')).toBeVisible();
+    await expect(page.getByTestId('left-panel-mobile')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'New chat' })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Search for a chat' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'New project' }),
+    ).toBeVisible();
+  });
+
+  test('it displays the projects section', async ({ page, browserName }) => {
+    const [projectName] = randomName('left-panel-project', browserName, 1);
+    await createProject(page, projectName);
+
+    const projectsSection = page.getByTestId('left-panel-projects');
+    await expect(projectsSection).toBeVisible();
+    await expect(projectsSection.getByText('Projects')).toBeVisible();
+
+    // The created project item should be listed
+    await expect(
+      projectsSection.getByRole('button', {
+        name: `Start new conversation in ${projectName}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+  });
+
+  test('a standalone conversation appears in chats section only', async ({
+    page,
+    browserName,
+  }) => {
+    const [prompt] = randomName('standalone-conv', browserName, 1);
+
+    // Send a message to create a standalone conversation
+    const chatInput = page.getByRole('textbox', {
+      name: 'Enter your message or a',
+    });
+    await chatInput.fill(prompt);
+    await page.keyboard.press('Enter');
+
+    // Wait for the conversation to appear in the left panel
+    const chatsSection = page.getByTestId('left-panel-favorites');
+    await expect(chatsSection).toBeVisible();
+    const conversationLink = chatsSection
+      .getByRole('link', { name: new RegExp(prompt) })
+      .first();
+    await expect(conversationLink).toBeVisible();
+
+    // It should NOT appear in the projects section
+    await expect(
+      page.getByTestId('left-panel-projects').getByText(prompt),
+    ).toHaveCount(0);
+  });
+
+  test('a project conversation appears in the project it belongs to, not in chat section', async ({
+    page,
+    browserName,
+  }) => {
+    const [projectName] = randomName('left-panel-conv', browserName, 1);
+    await createProject(page, projectName);
+
+    const projectsSection = page.getByTestId('left-panel-projects');
+    const projectButton = projectsSection.getByRole('button', {
+      name: `Start new conversation in ${projectName}`,
+      exact: true,
+    });
+    await expect(projectButton).toBeVisible();
+
+    // Start a new conversation in the project
+    await projectButton.click();
+
+    // Send a message to materialize the conversation
+    const [prompt] = randomName('project-conv', browserName, 1);
+    const chatInput = page.getByRole('textbox', {
+      name: 'Enter your message or a',
+    });
+    await chatInput.fill(prompt);
+    await page.keyboard.press('Enter');
+
+    // Wait for assistant response
+    await expect(page.getByTestId('assistant-message-content')).toBeVisible();
+
+    // The project should auto-expand and show the conversation
+    await expect(
+      projectsSection.getByRole('link', { name: new RegExp(prompt) }).first(),
+    ).toBeVisible();
+
+    // It should NOT appear in the standalone "Your chats" section
+    await expect(
+      page.getByTestId('left-panel-favorites').getByText(prompt),
+    ).toHaveCount(0);
+  });
+
+  test('it shows project actions on hover', async ({ page, browserName }) => {
+    const [projectName] = randomName('left-panel-actions', browserName, 1);
+    await createProject(page, projectName);
+
+    const projectsSection = page.getByTestId('left-panel-projects');
+    const projectButton = projectsSection.getByRole('button', {
+      name: `Start new conversation in ${projectName}`,
+      exact: true,
+    });
+    await expect(projectButton).toBeVisible();
+
+    // Hover to reveal action buttons
+    await projectButton.hover();
+    await expect(
+      page.getByLabel(`Actions list for project ${projectName}`),
+    ).toBeVisible();
+  });
+});
+
+test.describe('Left panel mobile', () => {
+  test.use({ viewport: { width: 500, height: 1200 } });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+});

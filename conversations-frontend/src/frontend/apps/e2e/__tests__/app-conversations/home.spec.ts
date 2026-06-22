@@ -1,0 +1,96 @@
+import { expect, test } from '@playwright/test';
+
+import { getLanguagePickerTrigger, overrideConfig } from './common';
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/home/');
+});
+
+test.describe('Home page', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+  test('checks all the elements are visible', async ({ page }) => {
+    await page.goto('/home/');
+
+    // Check header content
+    const header = page.locator('header').first();
+    const footer = page.locator('footer').first();
+    await expect(header).toBeVisible();
+    const langPicker = await getLanguagePickerTrigger(page);
+    await expect(langPicker).toBeVisible();
+    await expect(langPicker.locator('.c__language-picker__label')).toHaveText(
+      /^EN$/i,
+    );
+    await expect(
+      header.getByRole('img', { name: 'Assistant logo' }),
+    ).toBeVisible();
+
+    // Check the titles
+    const h2 = page.locator('h2');
+    await expect(h2.getByText('Your sovereign AI assistant')).toBeVisible();
+
+    await expect(footer).toBeVisible();
+  });
+
+  test('checks all the elements are visible with dsfr theme', async ({
+    page,
+  }) => {
+    await overrideConfig(page, {
+      FRONTEND_THEME: 'dsfr',
+      theme_customization: {
+        footer: {
+          default: {
+            externalLinks: [
+              {
+                label: 'legifrance.gouv.fr',
+                href: '#',
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    await page.goto('/home/');
+
+    // Check header content
+    const header = page.locator('header').first();
+    const footer = page.locator('footer').first();
+    await expect(header).toBeVisible();
+    const langPicker = await getLanguagePickerTrigger(page);
+    await expect(langPicker).toBeVisible();
+    await expect(langPicker.locator('.c__language-picker__label')).toHaveText(
+      /^EN$/i,
+    );
+    await expect(
+      header.getByRole('button', { name: 'Les services de LaSuite' }),
+    ).toBeVisible();
+    await expect(
+      header.getByRole('img', { name: 'Gouvernement Logo' }),
+    ).toBeVisible();
+    await expect(
+      header.getByRole('img', { name: 'Assistant logo' }),
+    ).toBeVisible();
+    await expect(
+      header.getByRole('img', { name: 'Assistant logo' }),
+    ).toBeVisible();
+
+    // Check the titles
+    const h2 = page.locator('h2');
+    await expect(h2.getByText('Your sovereign AI assistant')).toBeVisible();
+
+    await expect(footer).toBeVisible();
+  });
+
+  test('it checks the homepage feature flag', async ({ page }) => {
+    await overrideConfig(page, {
+      FRONTEND_HOMEPAGE_FEATURE_ENABLED: false,
+      FRONTEND_SILENT_LOGIN_ENABLED: false,
+    });
+
+    await page.goto('/');
+
+    // Keyclock login page
+    await expect(page.getByText('conversations')).toBeVisible();
+    await expect(page).toHaveURL(/http:\/\/localhost:8083\/.+/);
+  });
+});

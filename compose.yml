@@ -61,6 +61,13 @@ services:
       - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-}
       - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:-}
       - MASTRA_SOURCE_LINK_KEY=${MASTRA_SOURCE_LINK_KEY:-}
+      # --- Notation utilisateur (widget 5 étoiles) ---
+      # MASTRA_RATING_AUDIENCE doit valoir l'id du client public Keycloak (mastra-rating-spa),
+      # sinon requireRatingUser renvoie 503 « Notation non configurée ». Réutilise MASTRA_OIDC_ISSUER
+      # et MASTRA_OIDC_INTERNAL_URL ci-dessus. CORS optionnel : seulement si le front et Mastra sont
+      # sur des domaines différents (ici same-origin via Traefik PathPrefix /v1, donc laissé vide).
+      - MASTRA_RATING_AUDIENCE=${MASTRA_RATING_AUDIENCE:-mastra-rating-spa}
+      - MASTRA_RATING_CORS_ORIGIN=${MASTRA_RATING_CORS_ORIGIN:-}
     mem_limit: 2g
     depends_on:
       mastra_postgresql:
@@ -311,8 +318,18 @@ services:
     # le proxy nginx interne (frontend.conf monté ci-dessous).
 
   frontend-development:
-    image: lasuite/conversations-frontend:main@sha256:b204d0cfd2fef583947b5831e0ff6e026b003c64fd596a02ec999d036dffa6fb
-    platform: linux/amd64
+    build:
+      context: ./conversations-frontend
+      dockerfile: src/frontend/Dockerfile
+      target: frontend-production
+      args:
+        API_ORIGIN: https://${DOMAIN_FRONT}
+        PRODUCT_NAME: ${PRODUCT_NAME:-Assistant}
+        KEYCLOAK_URL: https://${DOMAIN_FRONT}/auth
+        KEYCLOAK_REALM: conversations
+        RATING_CLIENT_ID: mastra-rating-spa
+        # Mastra est servi sous le même domaine que le front (PathPrefix /admin et /v1)
+        RATING_API_URL: https://${DOMAIN_FRONT}
     restart: always
     volumes:
       - ./front-back/docker/files/etc/nginx/conf.d/frontend.conf:/etc/nginx/conf.d/default.conf:ro

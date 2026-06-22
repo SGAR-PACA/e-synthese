@@ -1,0 +1,105 @@
+import { useQuery } from '@tanstack/react-query';
+import { Resource } from 'i18next';
+
+import { APIError, errorCauses, fetchAPI } from '@/api';
+import { BaseTheme } from '@/cunningham/';
+import { FooterType } from '@/features/footer';
+import { PostHogConf } from '@/services';
+
+interface ThemeCustomization {
+  footer?: FooterType;
+  translations?: Resource;
+}
+
+export enum FeatureFlagState {
+  ENABLED = 'enabled',
+  DISABLED = 'disabled',
+  DYNAMIC = 'dynamic',
+}
+
+interface FeatureFlags {
+  [key: string]: FeatureFlagState;
+}
+export type BannerLevel = 'info' | 'warning' | 'alert';
+
+export interface StatusBanner {
+  level: BannerLevel;
+  title: string;
+  content: string;
+}
+
+export interface MaintenanceConfig {
+  enabled: boolean;
+  message?: string | null;
+}
+
+export interface ConfigResponse {
+  ACTIVATION_REQUIRED: boolean;
+  STATUS_PAGE_URL?: string | null;
+  ENVIRONMENT: string;
+  FEATURE_FLAGS: FeatureFlags;
+  FRONTEND_CSS_URL?: string;
+  FRONTEND_CONTACT_EMAIL?: string;
+  FRONTEND_DOCUMENTATION_URL?: string;
+  FRONTEND_HOMEPAGE_FEATURE_ENABLED?: boolean;
+  FRONTEND_THEME?: BaseTheme;
+  LANGUAGES: [string, string][];
+  LANGUAGE_CODE: string;
+  MEDIA_BASE_URL?: string;
+  POSTHOG_KEY?: PostHogConf;
+  SENTRY_DSN?: string;
+  FILE_UPLOAD_MODE?: string;
+  FRONTEND_SILENT_LOGIN_ENABLED?: boolean;
+  theme_customization?: ThemeCustomization;
+  status_banner?: StatusBanner;
+  maintenance?: MaintenanceConfig | null;
+  chat_upload_accept?: string;
+  project_files_max_count?: number;
+  project_images_max_count?: number;
+  attachment_max_size?: number;
+}
+
+const LOCAL_STORAGE_KEY = 'conversations_config';
+
+function getCachedConfig() {
+  try {
+    const jsonString = localStorage.getItem(LOCAL_STORAGE_KEY);
+    return jsonString ? (JSON.parse(jsonString) as ConfigResponse) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function setCachedConfig(config: ConfigResponse) {
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(config));
+}
+
+export const getConfig = async (): Promise<ConfigResponse> => {
+  const response = await fetchAPI(`config/`);
+
+  if (!response.ok) {
+    throw new APIError('Failed to get the doc', await errorCauses(response));
+  }
+
+  const config = response.json() as Promise<ConfigResponse>;
+  setCachedConfig(await config);
+
+  return config;
+};
+
+export const KEY_CONFIG = 'config';
+
+export function useConfig() {
+  const cachedData = getCachedConfig();
+  const oneHour = 1000 * 60 * 60;
+  const fiveMinutes = 1000 * 60 * 5;
+
+  return useQuery<ConfigResponse, APIError, ConfigResponse>({
+    queryKey: [KEY_CONFIG],
+    queryFn: () => getConfig(),
+    initialData: cachedData,
+    staleTime: oneHour,
+    initialDataUpdatedAt: Date.now() - oneHour, // Force initial data to be considered stale
+    refetchInterval: fiveMinutes,
+  });
+}
