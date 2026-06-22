@@ -13,6 +13,10 @@ export interface AppConfig {
   adminContactEmail: string;
   evalSamplingRate: number;
   evalWideK: number;
+  searchWideK: number;     // k par recherche (pêche large) — pipeline RAG
+  finalK: number;          // passages finaux gardés après rerank
+  rerankMinScore: number;  // seuil de note de rerank (anti-hallucination)
+  temperature: number;     // température par défaut du rédacteur
 }
 
 const DEFAULTS: AppConfig = {
@@ -27,6 +31,10 @@ const DEFAULTS: AppConfig = {
   adminContactEmail: '',
   evalSamplingRate: 1.0,
   evalWideK: 20,
+  searchWideK: 20,
+  finalK: 8,
+  rerankMinScore: 0.2,
+  temperature: 0.2,
 };
 
 const ENCRYPTED_KEYS = new Set(['albertApiKey']);
@@ -61,6 +69,10 @@ export async function getConfig(): Promise<AppConfig> {
   config.llmModel = (await getConfigValue('llmModel')) || process.env.LLM_MODEL || DEFAULTS.llmModel;
   config.searchK = parseInt((await getConfigValue('searchK')) || process.env.SEARCH_K || String(DEFAULTS.searchK), 10);
   config.minScore = parseFloat((await getConfigValue('minScore')) || process.env.MIN_SCORE || String(DEFAULTS.minScore));
+  config.searchWideK = parseInt((await getConfigValue('searchWideK')) || process.env.SEARCH_WIDE_K || String(DEFAULTS.searchWideK), 10);
+  config.finalK = parseInt((await getConfigValue('finalK')) || process.env.FINAL_K || String(DEFAULTS.finalK), 10);
+  config.rerankMinScore = parseFloat((await getConfigValue('rerankMinScore')) || process.env.RERANK_MIN_SCORE || String(DEFAULTS.rerankMinScore));
+  config.temperature = parseFloat((await getConfigValue('temperature')) || process.env.LLM_TEMPERATURE || String(DEFAULTS.temperature));
   config.useRerank = ((await getConfigValue('useRerank')) ?? process.env.USE_RERANK ?? String(DEFAULTS.useRerank)) === 'true';
   config.ragPromptTemplate = (await getConfigValue('ragPromptTemplate')) || DEFAULTS.ragPromptTemplate;
   config.adminContactEmail = (await getConfigValue('adminContactEmail')) || '';

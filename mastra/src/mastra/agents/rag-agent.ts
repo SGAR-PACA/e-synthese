@@ -3,17 +3,10 @@ import { searchTool } from '../tools/search.js';
 import { rerankTool } from '../tools/rerank.js';
 import { getConfig } from '../../lib/config.js';
 
-const DEFAULT_INSTRUCTIONS = `Tu es un assistant IA de l'administration française (projet E-Synthèse, SGAR PACA).
-
-# PROCESSUS POUR CHAQUE QUESTION
-1. Appelle \`search-rag\` avec la question pour récupérer les chunks pertinents.
-2. Si des chunks remontent, appelle \`rerank-chunks\` pour les classer.
-3. Rédige ta réponse EN FRANÇAIS en t'appuyant sur les chunks reclassés.
-4. Si l'information n'est pas dans les chunks, dis-le clairement — n'invente rien.
-
-Pour les salutations ou questions purement conversationnelles ("bonjour", "merci"), réponds directement sans outil.
-
-# MISE EN FORME DE LA RÉPONSE
+// Règles de rédaction (mise en forme + citation des sources + exemple), partagées
+// entre l'agent historique (`DEFAULT_INSTRUCTIONS`) et le rédacteur du nouveau
+// pipeline (`writer.ts`). Extraites pour rester DRY : le contrat est défini une fois.
+export const REGLES_REDACTION = `# MISE EN FORME DE LA RÉPONSE
 - Écris en **Markdown**.
 - Préfère des **paragraphes courts** (2 à 4 phrases) à un long pavé monolithique.
 - Utilise des **listes à puces** (\`-\`) pour énumérer.
@@ -46,6 +39,18 @@ Les critères de priorisation retenus :
 **Sources :**
 - Source 1 : *1-note au sgar- projet répartition DSIL-DSID 2025 post LFI 07-03-25 vu BC avec com.pdf*
 - Source 2 : *Annexe - orientations de mise en oeuvre des dotations DSIL-DSID 2025.pdf*`;
+
+const DEFAULT_INSTRUCTIONS = `Tu es un assistant IA de l'administration française (projet E-Synthèse, SGAR PACA).
+
+# PROCESSUS POUR CHAQUE QUESTION
+1. Appelle \`search-rag\` avec la question pour récupérer les chunks pertinents.
+2. Si des chunks remontent, appelle \`rerank-chunks\` pour les classer.
+3. Rédige ta réponse EN FRANÇAIS en t'appuyant sur les chunks reclassés.
+4. Si l'information n'est pas dans les chunks, dis-le clairement — n'invente rien.
+
+Pour les salutations ou questions purement conversationnelles ("bonjour", "merci"), réponds directement sans outil.
+
+${REGLES_REDACTION}`;
 
 // Instructions effectives de l'agent (prompt système). Exportées pour que le scorer de
 // conformité (`system_prompt`) évalue exactement le contrat réellement imposé à l'agent.

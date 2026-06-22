@@ -41,14 +41,38 @@ services:
       - LLM_MODEL=${LLM_MODEL:-albert-large}
       - PORT=4111
       - DATABASE_URL=postgresql://mastra:${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}@mastra_postgresql:5432/mastra
+      # --- Visionneuse de sources (phase Ingestion) ---
+      # Le worker d'ingestion ne démarre que si S3_DOCS_BUCKET est renseigné (cf. index.ts).
+      - OCR_SERVICE_URL=http://ocr:8080
+      - S3_DOCS_ENDPOINT=${S3_DOCS_ENDPOINT:-https://s3.fr-par.scw.cloud}
+      - S3_DOCS_REGION=${S3_DOCS_REGION:-fr-par}
+      - S3_DOCS_BUCKET=${S3_DOCS_BUCKET:-}
+      - S3_DOCS_ACCESS_KEY=${S3_DOCS_ACCESS_KEY:-}
+      - S3_DOCS_SECRET_KEY=${S3_DOCS_SECRET_KEY:-}
+      # --- Auth visionneuse de sources (OIDC + clés HMAC) — valeurs renseignées dans Dokploy ---
+      # ISSUER / REDIRECT_URI dépendent du domaine : à renseigner en entier dans Dokploy, ex :
+      #   MASTRA_OIDC_ISSUER=https://<DOMAIN_FRONT>/auth/realms/conversations
+      #   MASTRA_OIDC_REDIRECT_URI=https://<DOMAIN_FRONT>/v1/source/callback
+      # Tant que MASTRA_SOURCE_LINK_KEY est vide, aucun lien de source n'est généré (dégradation douce).
+      - MASTRA_OIDC_ISSUER=${MASTRA_OIDC_ISSUER:-}
+      - MASTRA_OIDC_INTERNAL_URL=${MASTRA_OIDC_INTERNAL_URL:-http://keycloak:8080/auth/realms/conversations}
+      - MASTRA_OIDC_CLIENT_ID=${MASTRA_OIDC_CLIENT_ID:-mastra-sources}
+      - MASTRA_OIDC_CLIENT_SECRET=${MASTRA_OIDC_CLIENT_SECRET:-}
+      - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-}
+      - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:-}
+      - MASTRA_SOURCE_LINK_KEY=${MASTRA_SOURCE_LINK_KEY:-}
+    mem_limit: 2g
     depends_on:
       mastra_postgresql:
         condition: service_healthy
         restart: true
+      ocr:
+        condition: service_started
     networks:
       - default
       - lasuite
       - dokploy-network
+      - internal
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4111/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -67,6 +91,29 @@ services:
       - "traefik.http.routers.mastra.tls.certresolver=letsencrypt"
       - "traefik.http.routers.mastra.priority=100"
       - "traefik.http.services.mastra.loadbalancer.server.port=4111"
+
+  ocr:
+    build: ./ocr-service
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    networks:
+      - internal
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   mastra_postgresql:
     image: postgres:17.5
@@ -381,3 +428,5 @@ networks:
     driver: bridge
   dokploy-network:
     external: true
+  internal:
+    internal: true

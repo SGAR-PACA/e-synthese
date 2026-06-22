@@ -112,3 +112,24 @@ export async function createEmbeddings(data: { input: string | string[]; model?:
   });
   return res.json();
 }
+
+// Récupère TOUS les chunks d'un document (pagination Albert). Tolérant aux variantes de schéma.
+export async function getDocumentChunks(documentId: string): Promise<Array<{ id: string; content: string }>> {
+  const out: Array<{ id: string; content: string }> = [];
+  let offset = 0;
+  const limit = 100;
+  for (let guard = 0; guard < 1000; guard++) {
+    const res = await albertFetch(`/v1/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`);
+    if (!res.ok) break;
+    const json: any = await res.json();
+    const rows: any[] = json.data || json.chunks || [];
+    for (const r of rows) {
+      const id = r.id ?? r.chunk?.id;
+      const content = r.content ?? r.chunk?.content ?? '';
+      if (id != null) out.push({ id: String(id), content: String(content) });
+    }
+    if (rows.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}

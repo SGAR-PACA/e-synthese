@@ -5,7 +5,19 @@ import { requireApiKey } from '../lib/middleware.js';
 import { getProxyApiKey } from '../lib/api-key.js';
 import { scoreRun } from '../mastra/scorers/run.js';
 import { contentToText } from '../lib/openai-content.js';
+import { planifier } from '../mastra/pipeline/planner.js';
+import { rechercherMultiple } from '../mastra/pipeline/retrieval.js';
+import { construirePromptRedaction } from '../mastra/pipeline/writer.js';
 import type { AppConfig } from '../lib/config.js';
+import type { RagChunk } from '../lib/db.js';
+import { injectSourceLinks, createSourcesStreamSplitter, type SignFn } from '../lib/sources-linker.js';
+import { signSourceToken } from '../lib/source-token.js';
+
+// Lie un signeur seulement si la clé est configurée ; sinon pas de liens (dégradation douce).
+function sourceSigner(): SignFn | undefined {
+  if (!process.env.MASTRA_SOURCE_LINK_KEY) return undefined;
+  return (documentId, chunkIds) => signSourceToken(documentId, chunkIds);
+}
 
 const MAX_TOKENS_CAP = 4096;
 
@@ -17,6 +29,15 @@ type OpenAIMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string };
+
+// SSE : `X-Accel-Buffering: no` demande aux proxies (nginx) de NE PAS mettre le
+// flux en mémoire tampon — sinon la réponse arrive d'un bloc à la fin.
+const SSE_HEADERS = {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache',
+  Connection: 'keep-alive',
+  'X-Accel-Buffering': 'no',
+};
 
 export const chatCompletionsRoute = [
   registerApiRoute('/v1/chat/completions', {
@@ -42,8 +63,8 @@ export const chatCompletionsRoute = [
       // invalides — on les retire avant de les transmettre à l'agent.
       const cleanedMessages = messages.filter((m) => {
         if (m.role !== 'assistant') return true;
-        const c = m.content;
-        return c !== null && c !== undefined && c !== '';
+        const ct = m.content;
+        return ct !== null && ct !== undefined && ct !== '';
       });
 
       if (cleanedMessages.length === 0) {
@@ -60,56 +81,63 @@ export const chatCompletionsRoute = [
       }
 
       const config = await getConfig();
-      const modelId = `albert/albert/${config.llmModel || 'albert-large'}`;
+      const model = config.llmModel || 'albert-large';
+      const modelId = `albert/albert/${model}`;
 
-      // Résolution de l'agent via le registre de l'instance Mastra (issue #8),
-      // au lieu d'un import direct du module. La route dépend ainsi de
-      // l'instance — point d'entrée du storage, des traces et des scorers.
-      const ragAgent = c.get('mastra').getAgent('ragAgent');
+      const question = lastUserText(cleanedMessages);
+      const planner = c.get('mastra').getAgent('plannerAgent');
+      const writer = c.get('mastra').getAgent('writerAgent');
 
+      // Température : forcée à la valeur basse par défaut si le client n'en fournit pas.
+      const writerSettings = {
+        temperature: modelOptions.temperature ?? config.temperature,
+        maxOutputTokens: modelOptions.maxOutputTokens,
+      };
+
+      // ───────────── Mode streaming ─────────────
       if (stream) {
-        const result = await ragAgent.stream(cleanedMessages, {
-          modelSettings: modelOptions,
-        });
-        const sseStream = toOpenAISSE(result, config.llmModel || 'albert-large');
-        maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
-        return new Response(sseStream, {
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
-          },
-        });
+        const sseStream = pipelineSSE({ question, planner, writer, writerSettings, config, model });
+        return new Response(sseStream, { headers: SSE_HEADERS });
       }
 
-      const result = await ragAgent.generate(cleanedMessages, {
-        modelSettings: modelOptions,
-      });
+      // ───────────── Mode non-streaming ─────────────
+      const plan = await planifier(question, planner);
 
-      maybeScoreLive(cleanedMessages, result, config, config.llmModel || 'albert-large');
+      // Cas direct (salutation / conversationnel) : réponse immédiate, pas de recherche, pas de notation.
+      if (plan.type === 'direct') {
+        return c.json(buildCompletion(modelId, model, plan.reponseDirecte, 'stop', undefined));
+      }
 
-      const openAIResponse = {
-        id: `chatcmpl-${randomUUID()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: modelId,
-        choices: [
-          {
-            index: 0,
-            message: { role: 'assistant', content: stripCitationBrackets(result.text ?? '') },
-            finish_reason: result.finishReason || 'stop',
-          },
-        ],
-        usage: {
-          prompt_tokens: result.usage?.inputTokens ?? 0,
-          completion_tokens: result.usage?.outputTokens ?? 0,
-          total_tokens: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),
-        },
-      };
-      return c.json(openAIResponse);
+      const { chunks } = await rechercherMultiple(plan.requetes, question);
+      const result: any = await writer.generate(
+        [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
+        { modelSettings: writerSettings },
+      );
+      const clean = stripCitationBrackets(result.text ?? '');
+      // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
+      maybeScoreLive(question, chunks, clean, config, model);
+      const sign = sourceSigner();
+      const answer = sign ? injectSourceLinks(clean, chunks, sign) : clean;
+      return c.json(buildCompletion(modelId, model, answer, result.finishReason || 'stop', result.usage));
     },
   }),
 ];
+
+// Construit une réponse OpenAI `chat.completion` (mode non-stream).
+function buildCompletion(modelId: string, _model: string, content: string, finishReason: string, usage: any) {
+  return {
+    id: `chatcmpl-${randomUUID()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: modelId,
+    choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: finishReason }],
+    usage: {
+      prompt_tokens: usage?.inputTokens ?? 0,
+      completion_tokens: usage?.outputTokens ?? 0,
+      total_tokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+    },
+  };
+}
 
 // Filet de sécurité : supprime les marqueurs de citation 【...】 que GPT-style
 // models continuent parfois à émettre malgré l'interdiction explicite dans le
@@ -139,7 +167,7 @@ function createBracketStripper(): (delta: string) => string {
   };
 }
 
-// Dernier message utilisateur (la question à noter).
+// Dernier message utilisateur (la question à traiter / noter).
 function lastUserText(messages: OpenAIMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'user') return contentToText(messages[i].content);
@@ -147,74 +175,93 @@ function lastUserText(messages: OpenAIMessage[]): string {
   return '';
 }
 
-// Texte final de la réponse : string en non-stream, promesse en stream.
-async function resolveAnswerText(result: any): Promise<string> {
-  const t = result?.text;
-  if (typeof t === 'string') return t;
-  if (t && typeof t.then === 'function') return (await t) ?? '';
-  return '';
-}
-
 // Notation LIVE : échantillonnée, détachée, JAMAIS bloquante ni propagatrice d'erreur.
-function maybeScoreLive(messages: OpenAIMessage[], result: any, config: AppConfig, genModel: string): void {
+// Reçoit directement les chunks utilisés (le pipeline déterministe les connaît).
+function maybeScoreLive(question: string, usedChunks: RagChunk[], answer: string, config: AppConfig, genModel: string): void {
   if (Math.random() >= (config.evalSamplingRate ?? 0)) return;
-  void (async () => {
-    const question = lastUserText(messages);
-    const answer = stripCitationBrackets(await resolveAnswerText(result));
-    if (!question || !answer) return;
-    await scoreRun({ question, answer, agentResult: result, source: 'live', genModel });
-  })().catch((err) => console.error('[eval] scoring live échoué:', err?.message || err));
+  const cleanAnswer = stripCitationBrackets(answer);
+  if (!question || !cleanAnswer) return;
+  void scoreRun({ question, answer: cleanAnswer, usedChunks, source: 'live', genModel })
+    .catch((err) => console.error('[eval] scoring live échoué:', err?.message || err));
 }
 
-function toOpenAISSE(agentStream: any, model: string): ReadableStream<Uint8Array> {
+interface PipelineSSEArgs {
+  question: string;
+  planner: any;
+  writer: any;
+  writerSettings: { temperature: number; maxOutputTokens?: number };
+  config: AppConfig;
+  model: string;
+}
+
+// Orchestre les 3 étapes À L'INTÉRIEUR du flux SSE : chaque étape émet son
+// libellé de progression (compartiment "réflexion") juste avant l'opération
+// lente, puis le rédacteur streame la réponse mot à mot.
+function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
+  const { question, planner, writer, writerSettings, config, model } = args;
   const encoder = new TextEncoder();
   const id = `chatcmpl-${randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
+
+  const send = (controller: ReadableStreamDefaultController<Uint8Array>, delta: any, finishReason: string | null = null) => {
+    const chunk = { id, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta, finish_reason: finishReason }] };
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+  };
+  const etape = (controller: ReadableStreamDefaultController<Uint8Array>, label: string) => {
+    // Étape nommée dans le compartiment "réflexion" (convention reasoning_content).
+    // L'affichage dépend du front (à vérifier en réel) ; au minimum, maintient le flux vivant.
+    send(controller, { reasoning_content: `${label}\n` });
+  };
+
   return new ReadableStream({
     async start(controller) {
-      const firstChunk = {
-        id,
-        object: 'chat.completion.chunk',
-        created,
-        model,
-        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
-      };
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(firstChunk)}\n\n`));
-
       try {
+        send(controller, { role: 'assistant' });
+
+        etape(controller, 'Analyse de la question…');
+        const plan = await planifier(question, planner);
+
+        // Cas direct : réponse immédiate, pas de recherche.
+        if (plan.type === 'direct') {
+          send(controller, { content: plan.reponseDirecte });
+          send(controller, {}, 'stop');
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          return;
+        }
+
+        etape(controller, 'Recherche dans les documents…');
+        const { chunks } = await rechercherMultiple(plan.requetes, question);
+
+        etape(controller, 'Rédaction de la réponse…');
+        const result: any = await writer.stream(
+          [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
+          { modelSettings: writerSettings },
+        );
+
         const stripper = createBracketStripper();
-        for await (const delta of agentStream.textStream) {
+        const splitter = createSourcesStreamSplitter();
+        const sign = sourceSigner();
+        let fullText = '';
+        for await (const delta of result.textStream) {
           const cleaned = stripper(delta);
           if (cleaned.length === 0) continue;
-          const chunk = {
-            id,
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [{ index: 0, delta: { content: cleaned }, finish_reason: null }],
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          fullText += cleaned;
+          const emit = splitter.push(cleaned);
+          if (emit.length > 0) send(controller, { content: emit });
         }
-        const finalChunk = {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-        };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`));
+        // Bloc Sources final : réécrit en liens signés (ou tel quel si pas de clé).
+        const tail = splitter.finalize((block) =>
+          sign ? injectSourceLinks(block, chunks, sign) : block,
+        );
+        if (tail.length > 0) send(controller, { content: tail });
+
+        send(controller, {}, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+
+        // Notation live sur le texte complet NON lié (format Sources préservé).
+        maybeScoreLive(question, chunks, fullText, config, model);
       } catch (err: any) {
-        const errorChunk = {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            { index: 0, delta: { content: `[error: ${err?.message || 'stream failed'}]` }, finish_reason: 'stop' },
-          ],
-        };
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+        send(controller, { content: `[error: ${err?.message || 'stream failed'}]` }, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
       } finally {
         controller.close();
