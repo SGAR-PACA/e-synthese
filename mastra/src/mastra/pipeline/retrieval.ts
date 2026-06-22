@@ -18,13 +18,17 @@ export function fusionnerEtDedupliquer(paquets: RagChunk[][]): RagChunk[] {
 }
 
 // Normalise un hit Albert en RagChunk (même logique que search.ts / run.ts).
-function normalizeHit(r: any): RagChunk {
+export function normalizeHit(r: any): RagChunk {
   const md = r.chunk?.metadata || {};
+  const documentId = r.chunk?.document_id != null ? String(r.chunk.document_id) : undefined;
+  const chunkId = r.chunk?.id != null ? String(r.chunk.id) : undefined;
   return {
     score: r.score ?? 0,
     content: r.chunk?.content || r.content || '',
-    name: md.document_name || md.name || md.title || md.filename || `Document ${r.chunk?.document_id ?? ''}`.trim(),
+    name: md.document_name || md.name || md.title || md.filename || `Document ${documentId ?? ''}`.trim(),
     url: md.directory_url || md.url || md.source_url || '',
+    documentId,
+    chunkId,
   };
 }
 

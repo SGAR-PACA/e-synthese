@@ -410,7 +410,7 @@ export async function getAuditLog(limit = 100): Promise<any[]> {
 }
 
 // ---- Évaluation RAG (notation) ----
-export interface RagChunk { name: string; content: string; score: number; url: string }
+export interface RagChunk { name: string; content: string; score: number; url: string; documentId?: string; chunkId?: string }
 
 export interface RagRunInput {
   source: 'live' | 'on-demand' | 'test';

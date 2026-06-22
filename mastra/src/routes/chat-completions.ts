@@ -10,6 +10,14 @@ import { rechercherMultiple } from '../mastra/pipeline/retrieval.js';
 import { construirePromptRedaction } from '../mastra/pipeline/writer.js';
 import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
+import { injectSourceLinks, createSourcesStreamSplitter, type SignFn } from '../lib/sources-linker.js';
+import { signSourceToken } from '../lib/source-token.js';
+
+// Lie un signeur seulement si la clé est configurée ; sinon pas de liens (dégradation douce).
+function sourceSigner(): SignFn | undefined {
+  if (!process.env.MASTRA_SOURCE_LINK_KEY) return undefined;
+  return (documentId, chunkIds) => signSourceToken(documentId, chunkIds);
+}
 
 const MAX_TOKENS_CAP = 4096;
 
@@ -105,8 +113,11 @@ export const chatCompletionsRoute = [
         [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
         { modelSettings: writerSettings },
       );
-      const answer = stripCitationBrackets(result.text ?? '');
-      maybeScoreLive(question, chunks, answer, config, model);
+      const clean = stripCitationBrackets(result.text ?? '');
+      // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
+      maybeScoreLive(question, chunks, clean, config, model);
+      const sign = sourceSigner();
+      const answer = sign ? injectSourceLinks(clean, chunks, sign) : clean;
       return c.json(buildCompletion(modelId, model, answer, result.finishReason || 'stop', result.usage));
     },
   }),
@@ -228,18 +239,26 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         );
 
         const stripper = createBracketStripper();
+        const splitter = createSourcesStreamSplitter();
+        const sign = sourceSigner();
         let fullText = '';
         for await (const delta of result.textStream) {
           const cleaned = stripper(delta);
-          fullText += cleaned;
           if (cleaned.length === 0) continue;
-          send(controller, { content: cleaned });
+          fullText += cleaned;
+          const emit = splitter.push(cleaned);
+          if (emit.length > 0) send(controller, { content: emit });
         }
+        // Bloc Sources final : réécrit en liens signés (ou tel quel si pas de clé).
+        const tail = splitter.finalize((block) =>
+          sign ? injectSourceLinks(block, chunks, sign) : block,
+        );
+        if (tail.length > 0) send(controller, { content: tail });
 
         send(controller, {}, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 
-        // Notation live après coup (texte complet connu), détachée et non bloquante.
+        // Notation live sur le texte complet NON lié (format Sources préservé).
         maybeScoreLive(question, chunks, fullText, config, model);
       } catch (err: any) {
         send(controller, { content: `[error: ${err?.message || 'stream failed'}]` }, 'stop');
