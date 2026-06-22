@@ -716,6 +716,42 @@
       ]
     },
     {
+      "clientId": "mastra-rating-spa",
+      "name": "Notation Mastra (SPA publique)",
+      "rootUrl": "https://__DOMAIN_FRONT__",
+      "baseUrl": "https://__DOMAIN_FRONT__",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "bearerOnly": false,
+      "redirectUris": ["https://__DOMAIN_FRONT__/*"],
+      "webOrigins": ["https://__DOMAIN_FRONT__"],
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://__DOMAIN_FRONT__/*"
+      },
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "acr", "roles", "profile", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+      "protocolMappers": [
+        {
+          "name": "audience-mastra-rating",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mastra-rating-spa",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "id": "0d004a05-7049-452c-83a8-2bae2b5d8015",
       "clientId": "realm-management",
       "name": "${client_realm-management}",

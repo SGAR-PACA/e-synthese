@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Notes</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Notes des utilisateurs</h2>
+  <div id="msg" class="message"></div>
+  <p id="stats">Chargement...</p>
+  <table role="grid">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Utilisateur</th>
+        <th>Note</th>
+        <th>Commentaire</th>
+        <th>Question</th>
+        <th>Réponse</th>
+      </tr>
+    </thead>
+    <tbody id="ratings-body"><tr><td colspan="6">Chargement...</td></tr></tbody>
+  </table>
+  <script src="/admin/app.js"></script>
+  <script>
+    function stars(n) {
+      var full = '★'.repeat(n), empty = '☆'.repeat(5 - n);
+      return full + empty;
+    }
+    function truncate(s, max) {
+      if (!s) return '-';
+      return s.length > max ? s.slice(0, max) + '…' : s;
+    }
+    (async function() {
+      await checkAuth();
+      buildNav('ratings');
+      var data = await apiGet('/admin/ratings?limit=200');
+      var statsEl = document.getElementById('stats');
+      var body = document.getElementById('ratings-body');
+      clearEl(body);
+      if (data && data.stats) {
+        var avg = data.stats.average ? data.stats.average.toFixed(2) : '0';
+        statsEl.textContent = data.stats.count + ' note(s) — moyenne ' + avg + ' / 5';
+      }
+      var items = (data && data.items) || [];
+      if (!items.length) {
+        body.appendChild(createEl('tr', {}, [createEl('td', { colspan: '6', textContent: 'Aucune note pour le moment.' })]));
+        return;
+      }
+      items.forEach(function(r) {
+        body.appendChild(createEl('tr', {}, [
+          createEl('td', { textContent: new Date(r.created_at).toLocaleString('fr') }),
+          createEl('td', { textContent: r.email || r.sub }),
+          createEl('td', { textContent: stars(r.rating) }),
+          createEl('td', { textContent: r.comment || '-' }),
+          createEl('td', { textContent: truncate(r.question, 120) }),
+          createEl('td', { textContent: truncate(r.answer, 120) }),
+        ]));
+      });
+    })();
+  </script>
+</body>
+</html>

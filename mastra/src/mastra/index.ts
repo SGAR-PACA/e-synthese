@@ -1,7 +1,7 @@
 import { Mastra } from '@mastra/core';
 import { startDocumentWorker } from '../lib/document-worker.js';
 import { PostgresStore } from '@mastra/pg';
-import { collectionsRoute, documentsRoute, searchRoute, chatCompletionsRoute, modelsRoute, adminApiRoute, adminUiRoute, scoresRoute, sourcesAuthRoute, sourcesRoute, sourcesAssetsRoute } from '../routes';
+import { collectionsRoute, documentsRoute, searchRoute, chatCompletionsRoute, modelsRoute, adminApiRoute, adminUiRoute, scoresRoute, sourcesAuthRoute, sourcesRoute, sourcesAssetsRoute, ratingsRoute } from '../routes';
 import { ragScorers } from './scorers/index.js';
 import { AlbertGateway } from './gateways/albert';
 import { ragAgent } from './agents/rag-agent';
@@ -23,6 +23,15 @@ export const mastra = new Mastra({
   scorers: ragScorers,
   server: {
     port: Number(process.env.PORT) || 4111,
+    // Autoriser l'origine du front à appeler Mastra (requêtes cross-origin avec Authorization).
+    cors: {
+      origin: process.env.MASTRA_RATING_CORS_ORIGIN
+        ? process.env.MASTRA_RATING_CORS_ORIGIN.split(',').map((o) => o.trim())
+        : [],
+      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowHeaders: ['Content-Type', 'Authorization'],
+      credentials: false,
+    },
     apiRoutes: [
       ...chatCompletionsRoute,
       ...modelsRoute,
@@ -35,6 +44,7 @@ export const mastra = new Mastra({
       ...sourcesAuthRoute,
       ...sourcesRoute,
       ...sourcesAssetsRoute,
+      ...ratingsRoute,
     ],
   },
 });

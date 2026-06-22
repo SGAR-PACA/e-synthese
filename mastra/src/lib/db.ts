@@ -121,6 +121,21 @@ async function applySchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_document_files_status ON document_files(status);
     CREATE INDEX IF NOT EXISTS idx_document_files_albert ON document_files(albert_document_id);
+    CREATE TABLE IF NOT EXISTS user_ratings (
+      id               INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      sub              TEXT NOT NULL,
+      email            TEXT,
+      message_id       TEXT NOT NULL,
+      conversation_id  TEXT,
+      rating           INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      comment          TEXT,
+      question         TEXT,
+      answer           TEXT,
+      created_at       TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      updated_at       TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      UNIQUE (sub, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_ratings_created ON user_ratings(created_at);
   `;
   await getPool().query(sql);
   schemaApplied = true;
@@ -635,4 +650,66 @@ export async function deleteDocumentFileByAlbertId(
     [albertDocumentId],
   );
   return rows[0];
+}
+
+// ---- Notation utilisateur ----
+export interface UserRating {
+  id: number;
+  sub: string;
+  email: string | null;
+  message_id: string;
+  conversation_id: string | null;
+  rating: number;
+  comment: string | null;
+  question: string | null;
+  answer: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function upsertRating(input: {
+  sub: string;
+  email: string | null;
+  message_id: string;
+  conversation_id: string;
+  rating: number;
+  comment: string;
+  question: string;
+  answer: string;
+}): Promise<void> {
+  await run(
+    `INSERT INTO user_ratings (sub, email, message_id, conversation_id, rating, comment, question, answer)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (sub, message_id) DO UPDATE SET
+       email = EXCLUDED.email,
+       conversation_id = EXCLUDED.conversation_id,
+       rating = EXCLUDED.rating,
+       comment = EXCLUDED.comment,
+       question = EXCLUDED.question,
+       answer = EXCLUDED.answer,
+       updated_at = ${NOW_ISO_SQL}`,
+    [input.sub, input.email, input.message_id, input.conversation_id, input.rating, input.comment, input.question, input.answer],
+  );
+}
+
+export async function getRatingForUser(sub: string, messageId: string): Promise<UserRating | undefined> {
+  const rows = await query<UserRating>(
+    `SELECT * FROM user_ratings WHERE sub = $1 AND message_id = $2`,
+    [sub, messageId],
+  );
+  return rows[0];
+}
+
+export async function listRatings(limit: number, offset: number): Promise<UserRating[]> {
+  return query<UserRating>(
+    `SELECT * FROM user_ratings ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  );
+}
+
+export async function getRatingStats(): Promise<{ count: number; average: number }> {
+  const rows = await query<{ count: number; average: number | null }>(
+    `SELECT COUNT(*)::int AS count, AVG(rating)::float AS average FROM user_ratings`,
+  );
+  return { count: Number(rows[0]?.count ?? 0), average: Number(rows[0]?.average ?? 0) };
 }

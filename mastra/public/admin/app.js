@@ -145,6 +145,7 @@ function buildNav(activePage) {
     links.push({ href: '/admin/users-page', label: 'Utilisateurs', page: 'users' });
     links.push({ href: '/admin/audit-page', label: 'Audit', page: 'audit' });
     links.push({ href: '/admin/eval', label: 'Évaluation', page: 'eval' });
+    links.push({ href: '/admin/ratings-page', label: 'Notes', page: 'ratings' });
   }
 
   links.push({ href: '/admin/account', label: 'Mon compte', page: 'me' });
@@ -158,6 +159,7 @@ function buildNav(activePage) {
     users: '<path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>',
     audit: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
     eval: '<line x1="6" y1="20" x2="6" y2="15"/><line x1="12" y1="20" x2="12" y2="9"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="3" y1="20" x2="21" y2="20"/>',
+    ratings: '<polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.7 5.8 21 7 14 2 9.3 9 8.5 12 2"/>',
     me: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'
   };

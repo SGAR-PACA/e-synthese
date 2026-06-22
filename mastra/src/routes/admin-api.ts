@@ -608,4 +608,16 @@ export const adminApiRoute = [
       return c.json(await db.getAuditLog(limit));
     },
   }),
+
+  registerApiRoute('/admin/ratings', {
+    method: 'GET',
+    handler: async (c) => {
+      const authResult = await requireAdmin(c);
+      if (authResult instanceof Response) return authResult;
+      const limit = parseInt(c.req.query('limit') || '200', 10);
+      const offset = parseInt(c.req.query('offset') || '0', 10);
+      const [items, stats] = await Promise.all([db.listRatings(limit, offset), db.getRatingStats()]);
+      return c.json({ stats, items });
+    },
+  }),
 ];

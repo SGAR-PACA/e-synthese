@@ -1,0 +1,58 @@
+import { Button } from '@gouvfr-lasuite/cunningham-react';
+import React, { useEffect, useState } from 'react';
+
+import { Box, Icon } from '@/components';
+
+interface ScrollDownProps {
+  onClick: () => void;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}
+
+export const ScrollDown: React.FC<ScrollDownProps> = ({
+  onClick,
+  containerRef,
+}) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (containerRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+        const isAtBottom = scrollTop + clientHeight >= scrollHeight - 25;
+        setIsVisible(!isAtBottom);
+      }
+    };
+
+    const container = containerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll, { passive: true });
+      setTimeout(handleScroll, 100);
+
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, [containerRef]);
+
+  return (
+    <Box
+      $css={`
+        position: absolute;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background-color: var(--c--contextuals--background--surface--primary);
+        opacity: ${isVisible ? '1' : '0'};
+        transition: opacity 0.3s ease;
+        pointer-events: ${isVisible ? 'auto' : 'none'};
+      `}
+    >
+      <Button
+        aria-label="See more"
+        color="brand"
+        variant="bordered"
+        onClick={onClick}
+        icon={<Icon $theme="inherit" iconName="arrow_downward" />}
+      />
+    </Box>
+  );
+};

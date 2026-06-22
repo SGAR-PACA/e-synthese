@@ -1,0 +1,87 @@
+import { Command } from 'cmdk';
+import { PropsWithChildren, ReactNode, useId, useRef, useState } from 'react';
+
+import { hasChildrens } from '@/utils/children';
+
+import { Box } from '../Box';
+
+import { QuickSearchInput } from './QuickSearchInput';
+import { QuickSearchStyle } from './QuickSearchStyle';
+
+export type QuickSearchAction = {
+  onSelect?: () => void;
+  content: ReactNode;
+};
+
+export type QuickSearchData<T> = {
+  groupName: string;
+  elements: T[];
+  emptyString?: string;
+  startActions?: QuickSearchAction[];
+  endActions?: QuickSearchAction[];
+  showWhenEmpty?: boolean;
+};
+
+export type QuickSearchProps = {
+  onFilter?: (str: string) => void;
+  inputValue?: string;
+  inputContent?: ReactNode;
+  showInput?: boolean;
+  loading?: boolean;
+  label?: string;
+  placeholder?: string;
+  /** Affiche le séparateur sous l'input seulement quand il y a des résultats à afficher */
+  hasResults?: boolean;
+};
+
+export const QuickSearch = ({
+  onFilter,
+  inputContent,
+  inputValue,
+  loading,
+  showInput = true,
+  label,
+  placeholder,
+  hasResults,
+  children,
+}: PropsWithChildren<QuickSearchProps>) => {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const listId = useId();
+  const [userInteracted, setUserInteracted] = useState(false);
+  const isExpanded = userInteracted;
+
+  const handleUserInteract = () => {
+    if (!userInteracted) {
+      setUserInteracted(true);
+    }
+  };
+
+  return (
+    <>
+      <QuickSearchStyle />
+      <div className="quick-search-container">
+        <Command label={label} shouldFilter={false} ref={ref} tabIndex={-1}>
+          {showInput && (
+            <QuickSearchInput
+              loading={loading}
+              withSeparator={
+                hasResults !== undefined ? hasResults : hasChildrens(children)
+              }
+              inputValue={inputValue}
+              onFilter={onFilter}
+              placeholder={placeholder}
+              listId={listId}
+              isExpanded={isExpanded}
+              onUserInteract={handleUserInteract}
+            >
+              {inputContent}
+            </QuickSearchInput>
+          )}
+          <Command.List id={listId} aria-label={label} role="listbox">
+            <Box>{children}</Box>
+          </Command.List>
+        </Command>
+      </div>
+    </>
+  );
+};
