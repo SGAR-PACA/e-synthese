@@ -19,9 +19,27 @@ async function albertFetch(path: string, options: RequestInit = {}): Promise<Res
   });
 }
 
+// Récupère TOUTES les pages d'un endpoint de liste Albert (pagination limit/offset,
+// `data[]` par page). Sans ça, Albert ne renvoie que les 10 premiers éléments (défaut).
+async function collectPaginated(basePath: string): Promise<any[]> {
+  const out: any[] = [];
+  const limit = 100;
+  let offset = 0;
+  const sep = basePath.includes('?') ? '&' : '?';
+  for (let guard = 0; guard < 1000; guard++) {
+    const res = await albertFetch(`${basePath}${sep}limit=${limit}&offset=${offset}`);
+    if (!res.ok) break;
+    const json: any = await res.json();
+    const rows: any[] = json.data || [];
+    out.push(...rows);
+    if (rows.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
 export async function listCollections() {
-  const res = await albertFetch('/v1/collections');
-  return res.json();
+  return { object: 'list', data: await collectPaginated('/v1/collections') };
 }
 
 export async function createCollection(data: { name: string; description?: string }) {
@@ -43,8 +61,10 @@ export async function deleteCollection(collectionId: string) {
 }
 
 export async function listDocuments(collectionId: string) {
-  const res = await albertFetch(`/v1/documents?collection_id=${collectionId}`);
-  return res.json();
+  return {
+    object: 'list',
+    data: await collectPaginated(`/v1/documents?collection_id=${encodeURIComponent(collectionId)}`),
+  };
 }
 
 export async function uploadDocument(formData: FormData) {
