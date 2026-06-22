@@ -106,6 +106,21 @@ async function applySchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_rag_scores_run    ON rag_scores(run_id);
     CREATE INDEX IF NOT EXISTS idx_rag_scores_metric ON rag_scores(metric);
     CREATE INDEX IF NOT EXISTS idx_rag_runs_created  ON rag_runs(created_at);
+    CREATE TABLE IF NOT EXISTS document_files (
+      id                  TEXT PRIMARY KEY,
+      albert_document_id  TEXT,
+      collection_id       INT,
+      filename            TEXT NOT NULL,
+      s3_key_searchable   TEXT,
+      status              TEXT NOT NULL CHECK(status IN ('processing','ready','failed')),
+      error               TEXT,
+      ocr_applied         BOOLEAN NOT NULL DEFAULT false,
+      uploaded_by         INT,
+      created_at          TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      updated_at          TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    );
+    CREATE INDEX IF NOT EXISTS idx_document_files_status ON document_files(status);
+    CREATE INDEX IF NOT EXISTS idx_document_files_albert ON document_files(albert_document_id);
   `;
   await getPool().query(sql);
   schemaApplied = true;
@@ -129,12 +144,19 @@ async function cleanupExpired(): Promise<void> {
   await run(`DELETE FROM password_resets WHERE expires_at < ${NOW_ISO_SQL}`);
 }
 
+// .unref() : ce timer périodique ne doit pas, à lui seul, maintenir le process
+// en vie (sinon `node --test` ne se termine jamais dès qu'un test importe db.ts).
+// En production, le serveur HTTP garde le process actif — l'interval tourne donc
+// normalement.
 setInterval(() => {
   cleanupExpired().catch((err) => console.error('cleanup error:', err));
-}, 60 * 60 * 1000);
+}, 60 * 60 * 1000).unref();
 
-// Nettoyage immédiat au démarrage (parité avec la version SQLite).
-cleanupExpired().catch((err) => console.error('cleanup error:', err));
+// Nettoyage immédiat au démarrage (parité avec la version SQLite). Silencieux
+// hors base configurée (ex. tests sans DATABASE_URL) : rien à nettoyer.
+if (process.env.DATABASE_URL) {
+  cleanupExpired().catch((err) => console.error('cleanup error:', err));
+}
 
 // ---- Chiffrement (synchrone — ne touche pas la base) ----
 let encryptionKey: string | null = null;
@@ -515,4 +537,102 @@ export async function getScores(f: ScoreFilters): Promise<{ count: number; items
   }));
 
   return { count, items };
+}
+
+// ---- Fichiers documents (visionneuse de sources) ----
+export type DocumentFileStatus = 'processing' | 'ready' | 'failed';
+
+export interface DocumentFile {
+  id: string;
+  albert_document_id: string | null;
+  collection_id: number | null;
+  filename: string;
+  s3_key_searchable: string | null;
+  status: DocumentFileStatus;
+  error: string | null;
+  ocr_applied: boolean;
+  uploaded_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Transition d'état PURE (testée). Un job terminal (ready/failed) ne bouge plus.
+export function nextJobStatus(
+  current: DocumentFileStatus,
+  event: 'ocr_done' | 'albert_done' | 'error',
+): DocumentFileStatus {
+  if (current !== 'processing') return current;
+  if (event === 'error') return 'failed';
+  if (event === 'albert_done') return 'ready';
+  return 'processing'; // ocr_done : étape intermédiaire
+}
+
+export async function createDocumentFile(input: {
+  id: string;
+  collectionId: number | null;
+  filename: string;
+  uploadedBy: number | null;
+}): Promise<void> {
+  await run(
+    `INSERT INTO document_files (id, collection_id, filename, status, uploaded_by)
+     VALUES ($1, $2, $3, 'processing', $4)`,
+    [input.id, input.collectionId, input.filename, input.uploadedBy],
+  );
+}
+
+// Prend un job en attente de façon concurrent-safe (plusieurs instances Mastra).
+export async function claimNextProcessingFile(): Promise<DocumentFile | undefined> {
+  const rows = await query<DocumentFile>(
+    `SELECT * FROM document_files
+     WHERE status = 'processing'
+     ORDER BY created_at ASC
+     FOR UPDATE SKIP LOCKED
+     LIMIT 1`,
+  );
+  return rows[0];
+}
+
+export async function markFileReady(
+  id: string,
+  albertDocumentId: string,
+  s3KeySearchable: string,
+  ocrApplied: boolean,
+): Promise<void> {
+  await run(
+    `UPDATE document_files
+     SET status = 'ready', albert_document_id = $2, s3_key_searchable = $3,
+         ocr_applied = $4, error = NULL, updated_at = ${NOW_ISO_SQL}
+     WHERE id = $1`,
+    [id, albertDocumentId, s3KeySearchable, ocrApplied],
+  );
+}
+
+export async function markFileFailed(id: string, message: string): Promise<void> {
+  await run(
+    `UPDATE document_files
+     SET status = 'failed', error = $2, updated_at = ${NOW_ISO_SQL}
+     WHERE id = $1`,
+    [id, message.slice(0, 500)],
+  );
+}
+
+export async function getDocumentFileByAlbertId(
+  albertDocumentId: string,
+): Promise<DocumentFile | undefined> {
+  const rows = await query<DocumentFile>(
+    `SELECT * FROM document_files WHERE albert_document_id = $1`,
+    [albertDocumentId],
+  );
+  return rows[0];
+}
+
+// Supprime la ligne et retourne l'ancienne valeur (pour effacer la clé S3 associée).
+export async function deleteDocumentFileByAlbertId(
+  albertDocumentId: string,
+): Promise<DocumentFile | undefined> {
+  const rows = await query<DocumentFile>(
+    `DELETE FROM document_files WHERE albert_document_id = $1 RETURNING *`,
+    [albertDocumentId],
+  );
+  return rows[0];
 }

@@ -22,3 +22,8 @@ data/
 .vscode/
 .idea/
 *.log
+
+# Specs/plans de travail (locaux) + scratch d'orchestration — non versionnés
+docs/specs/
+docs/plans/
+.superpowers/
