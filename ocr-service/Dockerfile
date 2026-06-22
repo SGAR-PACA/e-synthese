@@ -1,5 +1,5 @@
 # ocr-service/Dockerfile
-FROM jbarlow83/ocrmypdf:16.10.4
+FROM jbarlow83/ocrmypdf:v17.7.0
 # L'image fournit ocrmypdf + tesseract. On ajoute le pack langue FR + un serveur HTTP.
 USER root
 RUN apt-get update \
