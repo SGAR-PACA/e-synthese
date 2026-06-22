@@ -8,8 +8,7 @@
     "build": "mastra build",
     "start": "mastra start",
     "test": "node --import tsx --test test/*.test.ts",
-    "vendor-pdfjs": "node scripts/vendor-pdfjs.mjs",
-    "postinstall": "node scripts/vendor-pdfjs.mjs"
+    "vendor-pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "keywords": [],
   "author": "",
