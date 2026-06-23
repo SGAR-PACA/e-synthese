@@ -480,8 +480,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           {message.role === 'assistant' &&
             !(isLastAssistantMessage && status === 'streaming') &&
             conversationId &&
-            message.id &&
-            message.id.startsWith('trace-') && (
+            message.id && (
               <RatingWidget
                 conversationId={conversationId}
                 messageId={message.id}

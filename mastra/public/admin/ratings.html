@@ -56,9 +56,9 @@
           createEl('td', { textContent: new Date(r.created_at).toLocaleString('fr') }),
           createEl('td', { textContent: r.email || r.sub }),
           createEl('td', { textContent: stars(r.rating) }),
-          createEl('td', { textContent: r.comment || '-' }),
-          createEl('td', { textContent: truncate(r.question, 120) }),
-          createEl('td', { textContent: truncate(r.answer, 120) }),
+          createEl('td', { textContent: r.comment || '-', title: r.comment || '' }),
+          createEl('td', { textContent: truncate(r.question, 120), title: r.question || '' }),
+          createEl('td', { textContent: truncate(r.answer, 120), title: r.answer || '' }),
         ]));
       });
     })();

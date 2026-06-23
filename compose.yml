@@ -54,7 +54,7 @@ services:
       #   MASTRA_OIDC_ISSUER=https://<DOMAIN_FRONT>/auth/realms/conversations
       #   MASTRA_OIDC_REDIRECT_URI=https://<DOMAIN_FRONT>/v1/source/callback
       # Tant que MASTRA_SOURCE_LINK_KEY est vide, aucun lien de source n'est généré (dégradation douce).
-      - MASTRA_OIDC_ISSUER=${MASTRA_OIDC_ISSUER:-}
+      - MASTRA_OIDC_ISSUER=${MASTRA_OIDC_ISSUER:-https://${DOMAIN_FRONT}/auth/realms/conversations}
       - MASTRA_OIDC_INTERNAL_URL=${MASTRA_OIDC_INTERNAL_URL:-http://keycloak:8080/auth/realms/conversations}
       - MASTRA_OIDC_CLIENT_ID=${MASTRA_OIDC_CLIENT_ID:-mastra-sources}
       - MASTRA_OIDC_CLIENT_SECRET=${MASTRA_OIDC_CLIENT_SECRET:-}
@@ -426,6 +426,67 @@ services:
       - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
       - "traefik.http.routers.auth.priority=100"
       - "traefik.http.services.auth.loadbalancer.server.port=8080"
+
+  # Provisionne le client public `mastra-rating-spa` (notation) dans Keycloak à
+  # chaque déploiement, de façon idempotente (ne fait rien s'il existe déjà).
+  # Nécessaire car l'import du realm (realm.prod.json.tpl) ne rejoue qu'au tout
+  # premier boot : ce service couvre aussi les instances déjà initialisées.
+  keycloak-provision-rating:
+    image: quay.io/keycloak/keycloak:26.3
+    restart: "no"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        KCADM=/opt/keycloak/bin/kcadm.sh
+        CFG=/tmp/kcadm-rating.config
+        REALM=conversations
+        CID=mastra-rating-spa
+        # Attendre que l'API admin Keycloak réponde (jusqu'à ~60 s).
+        n=0
+        until "$$KCADM" config credentials --config "$$CFG" \
+                --server http://keycloak:8080/auth --realm master \
+                --user admin --password "$$KEYCLOAK_ADMIN_PASSWORD" 2>/dev/null; do
+          n=$$((n+1)); [ "$$n" -ge 20 ] && { echo "Keycloak injoignable."; exit 1; }
+          echo "Keycloak pas encore prêt (tentative $$n)…"; sleep 3
+        done
+        # Crée le client public s'il est absent.
+        ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' || true)
+        if [ -z "$$ID" ]; then
+          "$$KCADM" create clients --config "$$CFG" -r "$$REALM" \
+            -s clientId="$$CID" -s enabled=true -s protocol=openid-connect \
+            -s publicClient=true -s standardFlowEnabled=true \
+            -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false \
+            -s 'redirectUris=["https://${DOMAIN_FRONT}/*"]' \
+            -s 'webOrigins=["https://${DOMAIN_FRONT}"]' \
+            -s 'attributes."pkce.code.challenge.method"=S256'
+          echo "Client $$CID cree."
+        else
+          echo "Client $$CID deja present."
+        fi
+        ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes | tr -d '\r')
+        # Ajoute le mapper d'audience (aud=mastra-rating-spa) s'il est absent.
+        if ! "$$KCADM" get clients/$$ID/protocol-mappers/models --config "$$CFG" -r "$$REALM" --fields name --format csv --noquotes 2>/dev/null | grep -q audience-mastra-rating; then
+          "$$KCADM" create clients/$$ID/protocol-mappers/models --config "$$CFG" -r "$$REALM" \
+            -s name=audience-mastra-rating -s protocol=openid-connect \
+            -s protocolMapper=oidc-audience-mapper \
+            -s 'config."included.client.audience"=mastra-rating-spa' \
+            -s 'config."access.token.claim"=true' \
+            -s 'config."id.token.claim"=false'
+          echo "Mapper d audience cree."
+        else
+          echo "Mapper d audience deja present."
+        fi
+        echo "OK: notation Keycloak provisionnee."
+    networks:
+      - default
+      - lasuite
 
 # Pas de service maildev en prod (utiliser un vrai SMTP via EMAIL_HOST).
 # Pas de service nginx en prod : Traefik (Dokploy) sert directement
