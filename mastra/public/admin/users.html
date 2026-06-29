@@ -17,9 +17,9 @@
     <thead>
       <tr>
         <th>Email</th>
-        <th>Role</th>
+        <th>Rôle</th>
         <th>Collections</th>
-        <th>Cree le</th>
+        <th>Créé le</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -28,7 +28,7 @@
 
   <div id="reset-link-box" style="display:none;">
     <article>
-      <header>Lien de reinitialisation genere</header>
+      <header>Lien de réinitialisation généré</header>
       <p>Copiez ce lien et transmettez-le a l'utilisateur :</p>
       <code id="reset-link-value"></code>
     </article>
@@ -42,7 +42,7 @@
       <tr>
         <th>Collections</th>
         <th>Expire le</th>
-        <th>Utilise par</th>
+        <th>Utilisé par</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -51,27 +51,27 @@
 
   <div id="invite-link-box" style="display:none;">
     <article>
-      <header>Lien d'invitation genere</header>
+      <header>Lien d'invitation généré</header>
       <p>Copiez ce lien et transmettez-le au nouvel utilisateur :</p>
       <code id="invite-link-value"></code>
     </article>
   </div>
 
   <details open>
-    <summary>Generer une invitation</summary>
+    <summary>Générer une invitation</summary>
     <form id="invite-form" style="margin-top:1rem;">
       <label for="invite-collections">Collections</label>
       <select id="invite-collections" multiple required>
         <option value="">Chargement...</option>
       </select>
-      <small>Maintenez Ctrl (ou Cmd) pour selectionner plusieurs collections.</small>
-      <label for="invite-duration">Duree de validite</label>
+      <small>Maintenez Ctrl (ou Cmd) pour sélectionner plusieurs collections.</small>
+      <label for="invite-duration">Durée de validité</label>
       <select id="invite-duration">
         <option value="1">1 jour</option>
         <option value="7" selected>7 jours</option>
         <option value="30">30 jours</option>
       </select>
-      <button type="submit">Generer l'invitation</button>
+      <button type="submit">Générer l'invitation</button>
     </form>
   </details>
 
@@ -97,7 +97,7 @@
         var actions = createEl('td', {}, [
           createEl('button', { className: 'outline secondary', textContent: 'Reset MDP', onClick: function() { forceReset(u.id); } }),
           document.createTextNode(' '),
-          createEl('button', { className: 'outline secondary', textContent: 'Revoquer sessions', onClick: function() { revokeSessions(u.id); } }),
+          createEl('button', { className: 'outline secondary', textContent: 'Révoquer sessions', onClick: function() { revokeSessions(u.id); } }),
           document.createTextNode(' '),
           createEl('button', { className: 'outline contrast', textContent: 'Supprimer', onClick: function() { deleteUser(u.id, u.email); } }),
         ]);
@@ -116,27 +116,27 @@
       if (result && result.resetLink) {
         document.getElementById('reset-link-value').textContent = result.resetLink;
         document.getElementById('reset-link-box').style.display = 'block';
-        showMessage('msg', 'Lien de reinitialisation genere.', false);
+        showMessage('msg', 'Lien de réinitialisation généré.', false);
       } else {
-        showMessage('msg', (result && result.error) || 'Erreur lors de la reinitialisation', true);
+        showMessage('msg', (result && result.error) || 'Erreur lors de la réinitialisation', true);
       }
     }
 
     async function revokeSessions(userId) {
-      if (!confirm('Revoquer toutes les sessions de cet utilisateur ?')) return;
+      if (!confirm('Révoquer toutes les sessions de cet utilisateur ?')) return;
       var result = await apiPost('/admin/users/' + userId + '/revoke-sessions', {});
       if (result && result.ok) {
-        showMessage('msg', 'Sessions revoquees.', false);
+        showMessage('msg', 'Sessions révoquées.', false);
       } else {
         showMessage('msg', (result && result.error) || 'Erreur', true);
       }
     }
 
     async function deleteUser(userId, email) {
-      if (!confirm('Supprimer l\'utilisateur ' + email + ' ? Cette action est irreversible.')) return;
+      if (!confirm('Supprimer l\'utilisateur ' + email + ' ? Cette action est irréversible.')) return;
       var result = await apiDelete('/admin/users/' + userId);
       if (result && result.ok) {
-        showMessage('msg', 'Utilisateur supprime.', false);
+        showMessage('msg', 'Utilisateur supprimé.', false);
         await loadUsers();
       } else {
         showMessage('msg', (result && result.error) || 'Erreur lors de la suppression', true);
@@ -167,7 +167,7 @@
       if (!confirm('Supprimer cette invitation ?')) return;
       var result = await apiDelete('/admin/invitations/' + id);
       if (result && result.ok) {
-        showMessage('msg', 'Invitation supprimee.', false);
+        showMessage('msg', 'Invitation supprimée.', false);
         await loadInvitations();
       } else {
         showMessage('msg', (result && result.error) || 'Erreur', true);
@@ -193,7 +193,7 @@
       var select = document.getElementById('invite-collections');
       var collections = Array.from(select.selectedOptions).map(function(opt) { return parseInt(opt.value, 10); });
       if (!collections.length) {
-        showMessage('msg', 'Selectionnez au moins une collection.', true);
+        showMessage('msg', 'Sélectionnez au moins une collection.', true);
         return;
       }
       var durationDays = parseInt(document.getElementById('invite-duration').value, 10);
@@ -202,7 +202,7 @@
         var inviteLink = window.location.origin + '/admin/register?code=' + encodeURIComponent(result.inviteCode);
         document.getElementById('invite-link-value').textContent = inviteLink;
         document.getElementById('invite-link-box').style.display = 'block';
-        showMessage('msg', 'Invitation generee.', false);
+        showMessage('msg', 'Invitation générée.', false);
         await loadInvitations();
       } else {
         showMessage('msg', (result && result.error) || 'Erreur lors de la creation de l\'invitation', true);

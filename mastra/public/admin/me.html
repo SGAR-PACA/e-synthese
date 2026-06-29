@@ -28,7 +28,7 @@
   </form>
 
   <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
-    <strong>Nouveau code de recuperation</strong>
+    <strong>Nouveau code de récupération</strong>
     <p>Notez ce code precieusement, il remplace l'ancien.</p>
     <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
   </div>
@@ -47,7 +47,7 @@
         document.createTextNode(currentUser.email),
       ]));
       info.appendChild(createEl('p', {}, [
-        createEl('strong', { textContent: 'Role : ' }),
+        createEl('strong', { textContent: 'Rôle : ' }),
         document.createTextNode(currentUser.role),
       ]));
 
@@ -94,7 +94,7 @@
         return;
       }
 
-      showMessage('msg', 'Mot de passe modifie avec succes.', false);
+      showMessage('msg', 'Mot de passe modifié avec succès.', false);
       document.getElementById('password-form').reset();
 
       if (result.recoveryCode) {

@@ -14,19 +14,19 @@
   <form id="config-form">
     <fieldset>
       <legend>API Albert</legend>
-      <label for="albertApiKey">Cle API Albert</label>
+      <label for="albertApiKey">Clé API Albert</label>
       <input type="password" id="albertApiKey" placeholder="sk-...">
-      <small>Laissez vide pour garder la cle actuelle. Cle actuelle : <code id="current-key">...</code></small>
+      <small>Laissez vide pour garder la clé actuelle. Clé actuelle : <code id="current-key">...</code></small>
       <label for="albertApiBaseUrl">URL de base Albert API</label>
       <input type="url" id="albertApiBaseUrl" placeholder="https://albert.api.etalab.gouv.fr">
     </fieldset>
     <fieldset>
-      <legend>Modele LLM</legend>
-      <label for="llmModel">Modele</label>
+      <legend>Modèle LLM</legend>
+      <label for="llmModel">Modèle</label>
       <select id="llmModel"><option value="">Chargement...</option></select>
     </fieldset>
     <fieldset>
-      <legend>Parametres RAG</legend>
+      <legend>Paramètres RAG</legend>
       <div class="grid">
         <div>
           <label for="searchK">Nombre de resultats (K)</label>
@@ -40,15 +40,15 @@
       <label><input type="checkbox" id="useRerank" role="switch"> Activer le reranking</label>
     </fieldset>
     <fieldset>
-      <legend>Prompt systeme RAG</legend>
+      <legend>Prompt système RAG</legend>
       <textarea id="ragPromptTemplate" rows="6"></textarea>
-      <small>Utilisez {context} pour indiquer ou inserer le contexte RAG.</small>
+      <small>Utilisez {context} pour indiquer ou insérer le contexte RAG.</small>
     </fieldset>
     <fieldset>
       <legend>Contact</legend>
       <label for="adminContactEmail">Email de contact admin</label>
       <input type="email" id="adminContactEmail" placeholder="admin@example.com">
-      <small>Affiche sur la page de mot de passe oublie pour contacter un administrateur.</small>
+      <small>Affiche sur la page de mot de passe oublié pour contacter un administrateur.</small>
     </fieldset>
     <button type="submit">Sauvegarder</button>
   </form>
@@ -59,7 +59,7 @@
       buildNav('config');
       var config = await apiGet('/admin/config');
       if (!config) return;
-      document.getElementById('current-key').textContent = config.albertApiKey || 'Non configuree';
+      document.getElementById('current-key').textContent = config.albertApiKey || 'Non configurée';
       document.getElementById('albertApiBaseUrl').value = config.albertApiBaseUrl || '';
       document.getElementById('searchK').value = config.searchK;
       document.getElementById('minScore').value = config.minScore;

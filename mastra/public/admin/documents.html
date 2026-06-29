@@ -12,8 +12,8 @@
   <h2>Documents</h2>
   <div id="msg" class="message"></div>
   <label for="collection-select">Collection</label>
-  <select id="collection-select"><option value="">Selectionnez une collection...</option></select>
-  <div id="documents-list" style="margin-top:1rem;"><p>Selectionnez une collection pour voir ses documents.</p></div>
+  <select id="collection-select"><option value="">Sélectionnez une collection...</option></select>
+  <div id="documents-list" style="margin-top:1rem;"><p>Sélectionnez une collection pour voir ses documents.</p></div>
   <hr>
   <details>
     <summary>Uploader un document</summary>
@@ -47,7 +47,7 @@
       var container = document.getElementById('documents-list');
       clearEl(container);
       if (!collectionId) {
-        container.appendChild(createEl('p', { textContent: 'Selectionnez une collection pour voir ses documents.' }));
+        container.appendChild(createEl('p', { textContent: 'Sélectionnez une collection pour voir ses documents.' }));
         return;
       }
       container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Chargement...' }));
@@ -107,11 +107,11 @@
     });
 
     async function deleteDocument(id) {
-      if (!confirm('Supprimer ce document ? Cette action est irreversible.')) return;
+      if (!confirm('Supprimer ce document ? Cette action est irréversible.')) return;
       await apiDelete('/v1/documents/' + id);
       var collectionId = document.getElementById('collection-select').value;
       loadDocuments(collectionId);
-      showMessage('msg', 'Document supprime.', false);
+      showMessage('msg', 'Document supprimé.', false);
     }
 
     loadCollectionSelects();

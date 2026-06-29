@@ -10,11 +10,11 @@
 <body>
   <div class="login-container">
     <h2>Inscription</h2>
-    <p>Creez votre compte avec votre code d'invitation.</p>
+    <p>Créez votre compte avec votre code d'invitation.</p>
     <div id="msg" class="message"></div>
 
     <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
-      <strong>Code de recuperation</strong>
+      <strong>Code de récupération</strong>
       <p>Notez ce code precieusement, il ne sera plus jamais affiche.</p>
       <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
     </div>
@@ -32,7 +32,7 @@
       <label for="invite-code">Code d'invitation</label>
       <input type="text" id="invite-code" name="invite-code" required placeholder="Code d'invitation">
 
-      <button type="submit" id="submit-btn">Creer mon compte</button>
+      <button type="submit" id="submit-btn">Créer mon compte</button>
     </form>
 
     <p id="login-link" style="display:none; margin-top:1rem; text-align:center;">
@@ -80,7 +80,7 @@
           document.getElementById('recovery-code').textContent = data.recoveryCode;
           document.getElementById('recovery-box').style.display = 'block';
         }
-        showMessage('msg', 'Compte cree avec succes.', false);
+        showMessage('msg', 'Compte créé avec succès.', false);
         document.getElementById('login-link').style.display = 'block';
       } else {
         showMessage('msg', data.error || 'Erreur lors de l\'inscription', true);

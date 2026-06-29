@@ -14,7 +14,7 @@
     <div id="msg" class="message"></div>
 
     <div id="recovery-box" style="display:none; background:#fffbe6; border:2px solid #f0c000; border-radius:8px; padding:1rem; margin:1rem 0;">
-      <strong>Code de recuperation</strong>
+      <strong>Code de récupération</strong>
       <p>Notez ce code precieusement, il ne sera plus jamais affiche.</p>
       <code id="recovery-code" style="font-size:1.3rem; display:block; margin:0.5rem 0;"></code>
     </div>
@@ -35,7 +35,7 @@
     </form>
 
     <p id="links" style="margin-top:1rem; text-align:center;">
-      <a href="/admin/forgot-password">Mot de passe oublie ?</a>
+      <a href="/admin/forgot-password">Mot de passe oublié ?</a>
     </p>
   </div>
   <script src="/admin/app.js"></script>
@@ -49,9 +49,9 @@
       if (!data.isSetup) {
         isSetupMode = true;
         document.getElementById('title').textContent = 'Premier lancement';
-        document.getElementById('subtitle').textContent = 'Creez un compte administrateur pour securiser le panel.';
+        document.getElementById('subtitle').textContent = 'Créez un compte administrateur pour sécuriser le panel.';
         document.getElementById('confirm-group').style.display = 'block';
-        document.getElementById('submit-btn').textContent = 'Creer le compte admin';
+        document.getElementById('submit-btn').textContent = 'Créer le compte admin';
         document.getElementById('links').style.display = 'none';
       }
     })();
