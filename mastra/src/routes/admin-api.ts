@@ -6,6 +6,7 @@ import { requireAuth, requireAdmin, verifyCsrf, getAuth, getClientIp } from '../
 import { validatePassword } from '../lib/crypto.js';
 import * as albert from '../lib/albert-client.js';
 import { scoreRun } from '../mastra/scorers/run.js';
+import { parseCitedSources } from '../lib/cited-sources.js';
 
 await initConfigFromEnv();
 
@@ -618,6 +619,53 @@ export const adminApiRoute = [
       const offset = parseInt(c.req.query('offset') || '0', 10);
       const [items, stats] = await Promise.all([db.listRatings(limit, offset), db.getRatingStats()]);
       return c.json({ stats, items });
+    },
+  }),
+
+  // KPIs agrégés pour le dashboard admin (count, moyenne, répartition, tendance).
+  registerApiRoute('/admin/ratings/stats', {
+    method: 'GET',
+    handler: async (c) => {
+      const authResult = await requireAdmin(c);
+      if (authResult instanceof Response) return authResult;
+      return c.json(await db.getRatingDashboardStats());
+    },
+  }),
+
+  // Reconstruit les sources citées (PDF + texte des chunks) pour une note donnée.
+  // Relit les liens signés Mastra dans user_ratings.answer, vérifie la signature,
+  // puis résout le nom du PDF (document_files) et le texte des chunks (Albert).
+  registerApiRoute('/admin/ratings/:id/sources', {
+    method: 'GET',
+    handler: async (c) => {
+      const authResult = await requireAdmin(c);
+      if (authResult instanceof Response) return authResult;
+      const key = process.env.MASTRA_SOURCE_LINK_KEY;
+      if (!key) return c.json({ sources: [], note: 'Liens de sources inactifs (MASTRA_SOURCE_LINK_KEY absent).' });
+      const id = parseInt(c.req.param('id'), 10);
+      if (Number.isNaN(id)) return c.json({ error: 'Note introuvable' }, 404);
+      const rows = await db.query<{ answer: string }>(`SELECT answer FROM user_ratings WHERE id = $1`, [id]);
+      if (!rows[0]) return c.json({ error: 'Note introuvable' }, 404);
+      const cited = parseCitedSources(rows[0].answer ?? '', key, Date.now());
+      const sources: Array<{ documentId: string; filename: string; status: string | null; href: string; chunks: { id: string; content: string }[] }> = [];
+      for (const s of cited) {
+        const file = await db.getDocumentFileByAlbertId(s.documentId);
+        let chunks: { id: string; content: string }[] = [];
+        try {
+          const want = new Set(s.chunkIds);
+          chunks = (await albert.getDocumentChunks(s.documentId)).filter((ch) => want.has(ch.id));
+        } catch (err) {
+          console.error('[admin-ratings] chunks indisponibles:', (err as Error).message);
+        }
+        sources.push({
+          documentId: s.documentId,
+          filename: file?.filename ?? '(document inconnu)',
+          status: file?.status ?? null,
+          href: s.href,
+          chunks,
+        });
+      }
+      return c.json({ sources });
     },
   }),
 ];

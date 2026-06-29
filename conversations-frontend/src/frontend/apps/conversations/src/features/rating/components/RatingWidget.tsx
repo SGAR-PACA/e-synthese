@@ -77,32 +77,40 @@ export const RatingWidget = ({
       <Box $direction="row" $align="center" $gap="6px">
         <Text $css="font-size: 12px;">{t('Noter cette réponse :')}</Text>
         <Box $direction="row" $gap="2px">
-          {[1, 2, 3, 4, 5].map((value) => (
-            // Le <span> porte l'accessibilité et les handlers ; l'Icon est purement visuel.
-            <span
-              key={value}
-              role="button"
-              tabIndex={0}
-              aria-label={t('Note {{n}} sur 5', { n: value })}
-              onClick={() => setRating(value)}
-              onMouseEnter={() => setHover(value)}
-              onMouseLeave={() => setHover(0)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setRating(value);
-                }
-              }}
-              style={{ cursor: 'pointer', display: 'inline-flex' }}
-            >
-              <Icon
-                iconName={(hover || rating) >= value ? 'star' : 'star_border'}
-                $theme={(hover || rating) >= value ? 'warning' : 'neutral'}
-                $variation="550"
-                $size="20px"
-              />
-            </span>
-          ))}
+          {[1, 2, 3, 4, 5].map((value) => {
+            // Étoile « pleine or » si la note (ou le survol) l'atteint, sinon
+            // « contour gris ». Couleur explicite + remplissage forcé, pour ne
+            // pas dépendre du thème (Material Symbols est en FILL 0 par défaut,
+            // donc star/star_border s'affichaient identiques).
+            const active = (hover || rating) >= value;
+            return (
+              <span
+                key={value}
+                role="button"
+                tabIndex={0}
+                aria-label={t('Note {{n}} sur 5', { n: value })}
+                onClick={() => setRating(value)}
+                onMouseEnter={() => setHover(value)}
+                onMouseLeave={() => setHover(0)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setRating(value);
+                  }
+                }}
+                style={{ cursor: 'pointer', display: 'inline-flex' }}
+              >
+                <Icon
+                  iconName="star"
+                  $size="22px"
+                  $css={`
+                    color: ${active ? '#f5a623' : '#9aa0a6'} !important;
+                    font-variation-settings: 'FILL' ${active ? 1 : 0};
+                  `}
+                />
+              </span>
+            );
+          })}
         </Box>
       </Box>
 

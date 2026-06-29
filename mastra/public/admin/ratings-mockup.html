@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notes — maquette datavision</title>
+<style>
+  :root {
+    --bg:#161a23; --panel:#1e2430; --panel2:#252c3a; --border:#2e3645;
+    --text:#e6e9ef; --muted:#9aa3b2; --accent:#7c6cf0; --gold:#f5a623;
+    --green:#2ecc71; --amber:#f1c40f; --red:#e74c3c; --blue:#4aa3ff;
+    --radius:14px;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px; line-height:1.5; }
+  .wrap { max-width:1240px; margin:0 auto; padding:28px 24px 48px; }
+  h1 { font-size:22px; margin:0 0 2px; font-weight:650; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:22px; }
+
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:14px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; }
+  .kpi .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .kpi .val { font-size:28px; font-weight:700; margin-top:6px; }
+  .kpi .val small { font-size:15px; font-weight:600; color:var(--muted); }
+  .trendpill { font-size:12px; margin-top:4px; } .up{color:var(--green);} .down{color:var(--red);}
+
+  .charts { display:grid; grid-template-columns:1fr 1.2fr; gap:14px; margin-bottom:14px; }
+  .card h3 { margin:0 0 14px; font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .distrow { display:flex; align-items:center; gap:10px; margin:9px 0; }
+  .distrow .lab { width:30px; color:var(--gold); font-size:13px; }
+  .bar { flex:1; height:14px; background:var(--panel2); border-radius:7px; overflow:hidden; }
+  .bar > i { display:block; height:100%; border-radius:7px; background:linear-gradient(90deg,#b8851f,var(--gold)); }
+  .distrow .cnt { width:34px; text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .spark { width:100%; height:150px; }
+
+  .toolbar { display:flex; gap:10px; margin-bottom:12px; align-items:center; flex-wrap:wrap; }
+  .seg { display:flex; background:var(--panel2); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .seg button { background:none; border:0; color:var(--muted); padding:7px 12px; font-size:13px; cursor:pointer; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .search { flex:1; min-width:160px; background:var(--panel2); border:1px solid var(--border);
+    border-radius:10px; color:var(--text); padding:8px 12px; font-size:13px; }
+
+  .md { display:grid; grid-template-columns:330px 1fr; gap:14px; }
+  .list { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    overflow:hidden; max-height:680px; overflow-y:auto; }
+  .item { padding:12px 14px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; gap:11px; }
+  .item:hover { background:var(--panel2); }
+  .item.on { background:var(--panel2); box-shadow:inset 3px 0 0 var(--accent); }
+  .avatar { width:32px; height:32px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; color:#fff; }
+  .item .who { font-size:13px; font-weight:600; }
+  .item .meta { color:var(--muted); font-size:12px; }
+  .item .snip { color:var(--muted); font-size:12px; margin-top:3px; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
+  .stars { letter-spacing:1px; font-size:13px; white-space:nowrap; }
+  .stars .f { color:var(--gold); } .stars .e { color:#3a4252; }
+
+  .detail { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:0; overflow:hidden; }
+  .dhead { padding:20px 24px 0; }
+  .dhead .top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
+  .who2 { font-weight:650; font-size:15px; } .meta2 { color:var(--muted); font-size:12.5px; }
+  .bigstars { font-size:24px; letter-spacing:2px; }
+  .tabs { display:flex; gap:4px; margin-top:16px; border-bottom:1px solid var(--border); }
+  .tabs button { background:none; border:0; color:var(--muted); padding:10px 14px; font-size:13px; cursor:pointer; border-bottom:2px solid transparent; }
+  .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  .pane { padding:18px 24px 24px; }
+  .block { margin-top:18px; } .block:first-child { margin-top:0; }
+  .block .t { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:6px; }
+  .q { background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .a { background:#1a202b; border:1px solid var(--border); border-radius:10px; padding:12px 14px; max-height:240px; overflow-y:auto; white-space:pre-wrap; }
+  .c { border-left:3px solid var(--gold); padding:8px 0 8px 14px; color:#f0d9a8; font-style:italic; }
+  .badge { display:inline-block; font-size:11px; padding:2px 9px; border-radius:20px; font-weight:600; }
+  .b-pos{background:rgba(46,204,113,.15);color:var(--green);} .b-mid{background:rgba(241,196,15,.15);color:var(--amber);} .b-neg{background:rgba(231,76,60,.15);color:var(--red);}
+
+  /* Sources & chunks */
+  .verifbar { display:flex; gap:18px; flex-wrap:wrap; background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:10px 14px; font-size:13px; }
+  .verifbar b { color:var(--text); } .verifbar span { color:var(--muted); }
+  .srccard { display:flex; align-items:center; gap:12px; background:#1a202b; border:1px solid var(--border); border-radius:10px; padding:11px 14px; margin-top:8px; }
+  .srccard .ic { width:34px; height:34px; border-radius:8px; background:rgba(231,76,60,.15); color:#ff7a6b; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex:0 0 auto; }
+  .srccard .fn { font-weight:600; font-size:13px; }
+  .srccard .fm { color:var(--muted); font-size:12px; }
+  .srccard a { margin-left:auto; background:var(--accent); color:#fff; text-decoration:none; font-size:12px; padding:6px 12px; border-radius:8px; white-space:nowrap; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:20px; background:var(--panel2); color:var(--muted); }
+  .pill.good { background:rgba(74,163,255,.15); color:var(--blue); }
+  .chunk { border:1px solid var(--border); border-radius:10px; margin-top:8px; overflow:hidden; }
+  .chunk .ch { display:flex; align-items:center; gap:10px; padding:10px 13px; cursor:pointer; background:var(--panel2); }
+  .chunk .ch .doc { font-size:12.5px; font-weight:600; }
+  .chunk .ch .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .chunk .body { padding:0 13px; max-height:0; overflow:hidden; transition:max-height .2s, padding .2s; color:var(--muted); font-size:13px; }
+  .chunk.open .body { max-height:300px; padding:12px 13px; }
+  .used { color:var(--green); } .unused { color:var(--muted); }
+  @media (max-width:900px){ .kpis{grid-template-columns:repeat(2,1fr);} .charts{grid-template-columns:1fr;} .md{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Notes des utilisateurs</h1>
+  <div class="sub">Maquette — données fictives. Tableau de bord de satisfaction & vérification des sources (bêta).</div>
+
+  <div class="kpis" id="kpis"></div>
+  <div class="charts">
+    <div class="card"><h3>Répartition des notes</h3><div id="dist"></div></div>
+    <div class="card"><h3>Moyenne dans le temps</h3><svg class="spark" id="spark" viewBox="0 0 600 150" preserveAspectRatio="none"></svg></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg" id="seg">
+      <button data-f="all" class="on">Toutes</button>
+      <button data-f="pos">≥ 4★</button>
+      <button data-f="neg">≤ 2★</button>
+      <button data-f="com">Avec commentaire</button>
+    </div>
+    <input class="search" id="search" placeholder="🔍 Rechercher (question, réponse, commentaire, PDF, utilisateur)…">
+  </div>
+
+  <div class="md">
+    <div class="list" id="list"></div>
+    <div class="detail" id="detail"></div>
+  </div>
+</div>
+
+<script>
+var DATA = [
+  { id:1, email:"marie.dupont@paca.gouv.fr", rating:5, created_at:"2026-06-22T14:03:00Z",
+    comment:"Réponse claire, bien structurée et surtout bien sourcée. Parfait.",
+    question:"Qui est Didier Mamis ?",
+    answer:"Didier Mamis est le Secrétaire général pour les affaires régionales (SGAR) de la région PACA. Il est mentionné comme tel dans plusieurs listes de participants à des réunions de préparation du Comité d'animation régional (Pré-CAR) et du Collège des secrétaires généraux (Collège des SG)." },
+  { id:2, email:"paul.martin@paca.gouv.fr", rating:3, created_at:"2026-06-22T11:20:00Z",
+    comment:"Manque la date exacte de la dernière réunion.",
+    question:"Combien y a-t-il eu de CAR jusqu'à présent en 2025 ?",
+    answer:"D'après les relevés de décisions, plusieurs CAR se sont tenus en 2025 : notamment les 16 janvier, 15 mai et 17 juillet." },
+  { id:3, email:"lea.bernard@paca.gouv.fr", rating:4, created_at:"2026-06-22T10:55:00Z",
+    comment:"Bonne synthèse.", question:"Quelles études a fait Tom Gourdon ?",
+    answer:"Les documents fournis ne précisent pas le parcours d'études de Tom Gourdon. Aucune source ne mentionne cette information." },
+  { id:4, email:"jonathan.roux@paca.gouv.fr", rating:2, created_at:"2026-06-21T09:12:00Z",
+    comment:"L'assistant n'a pas trouvé l'info alors qu'elle est dans le document.",
+    question:"Quel est le budget alloué au projet régional 2025 ?",
+    answer:"Je ne dispose pas d'information sur le budget alloué au projet régional 2025 dans les sources consultées." },
+  { id:5, email:"ana.lopez@paca.gouv.fr", rating:5, created_at:"2026-06-21T08:40:00Z",
+    comment:"", question:"Liste des participants au Collège des SG du 15 mai 2025 ?",
+    answer:"D'après « Liste participants_Coll SG 15 mai 2025.pdf », les participants comprenaient les secrétaires généraux des préfectures de la région ainsi que plusieurs représentants des services déconcentrés de l'État." },
+  { id:6, email:"sam.giraud@paca.gouv.fr", rating:4, created_at:"2026-06-20T16:01:00Z",
+    comment:"Utile, mais j'aurais aimé un lien direct vers la source.",
+    question:"Quel était l'ordre du jour du Pré-CAR du 16 janvier ?",
+    answer:"L'ordre du jour du Pré-CAR du 16 janvier figure dans « Pré-CAR 16 janv_RD.pdf » : préparation des dossiers régionaux, points d'actualité et arbitrages budgétaires." },
+  { id:7, email:"claire.fabre@paca.gouv.fr", rating:1, created_at:"2026-06-20T13:30:00Z",
+    comment:"Réponse hors sujet.", question:"Qui préside le CAR ?",
+    answer:"Je n'ai pas pu déterminer avec certitude qui préside le CAR à partir des documents disponibles." },
+  { id:8, email:"hugo.moreau@paca.gouv.fr", rating:5, created_at:"2026-06-19T15:22:00Z",
+    comment:"Excellente réponse, rapide et précise.", question:"Quand a eu lieu le dernier Pré-CAR ?",
+    answer:"Le dernier Pré-CAR référencé s'est tenu le 17 juillet, d'après « Pré-CAR 17 juillet_Relevé décisions.pdf »." },
+  { id:9, email:"ines.benali@paca.gouv.fr", rating:4, created_at:"2026-06-19T10:10:00Z",
+    comment:"Correct.", question:"Combien de participants au Pré-CAR du 15 mai ?",
+    answer:"La « Liste participants_Pré-CAR 15 mai 2025.pdf » recense l'ensemble des participants ; le total précis figure dans ce document." },
+  { id:10, email:"marie.dupont@paca.gouv.fr", rating:3, created_at:"2026-06-18T09:45:00Z",
+    comment:"Moyennement satisfaite, réponse un peu courte.", question:"Résume les décisions du CAR du 15 mai.",
+    answer:"Le relevé de décisions du 15 mai (« Pré-CAR 15 mai_RD.pdf ») mentionne plusieurs arbitrages et validations de dossiers régionaux." },
+  { id:11, email:"yann.leroy@paca.gouv.fr", rating:5, created_at:"2026-06-17T14:00:00Z",
+    comment:"Top.", question:"Qui est le SGAR de la région PACA ?",
+    answer:"Le SGAR de la région PACA est Didier Mamis." },
+  { id:12, email:"sofia.costa@paca.gouv.fr", rating:2, created_at:"2026-06-16T11:05:00Z",
+    comment:"Trop vague.", question:"Quels sont les axes prioritaires régionaux ?",
+    answer:"Les documents ne détaillent pas explicitement les axes prioritaires régionaux." },
+];
+
+// ---- Enrichissement fictif : sources (PDF) + chunks récupérés ----
+var PDFS=["Pré-CAR 16 janv_RD.pdf","Liste participants_Pré-CAR 2025.pdf","Pré-CAR 15 mai_RD.pdf",
+  "Liste participants_Coll SG 15 mai 2025.pdf","Pré-CAR 17 juillet_Relevé décisions.pdf","Liste participants.pdf"];
+DATA.forEach(function(r){
+  r.model="albert-large"; r.wideK=12;
+  r.refusal = /ne dispose pas|n'ai pas|ne précisent pas|ne détaillent pas/.test(r.answer);
+  var k = 4 + (r.id % 3);             // 4..6 chunks récupérés
+  r.chunks=[];
+  for (var i=0;i<k;i++){
+    var pdf=PDFS[(r.id+i)%PDFS.length];
+    var page=1+((r.id*5+i*3)%18);
+    var score=Math.max(0.41,(0.93 - i*0.09 - (r.id%4)*0.015)).toFixed(2);
+    var used = !r.refusal && i < Math.max(1,k-3);   // les + pertinents sont « utilisés »
+    r.chunks.push({ doc:pdf, page:page, score:score, used:used, chunkId:"chk_"+r.id+"_"+i,
+      text:"« …extrait du document "+pdf+" (p."+page+"). Contexte fourni à l'IA : participants, "+
+           "dates de réunion et relevés de décisions servant à répondre à « "+r.question+" ». "+
+           "Passage cité/considéré lors de la génération… »" });
+  }
+  // documents cités = docs distincts effectivement utilisés
+  var seen={}; r.sources=[];
+  r.chunks.forEach(function(c){ if(c.used){ if(!seen[c.doc]){ seen[c.doc]={file:c.doc,pages:[],score:c.score}; r.sources.push(seen[c.doc]); } seen[c.doc].pages.push(c.page); }});
+});
+
+function initials(e){ return e.split('@')[0].split('.').map(function(p){return p[0];}).join('').slice(0,2).toUpperCase(); }
+function avatarColor(e){ var h=0; for(var i=0;i<e.length;i++) h=(h*31+e.charCodeAt(i))%360; return 'hsl('+h+',45%,45%)'; }
+function starsHTML(n){ var s=''; for(var i=1;i<=5;i++) s+='<span class="'+(i<=n?'f':'e')+'">★</span>'; return s; }
+function fmtDate(d){ return new Date(d).toLocaleString('fr',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function badge(r){ return r>=4?'<span class="badge b-pos">positif</span>':r>=3?'<span class="badge b-mid">neutre</span>':'<span class="badge b-neg">négatif</span>'; }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderKpis(){
+  var n=DATA.length, sum=DATA.reduce(function(a,r){return a+r.rating;},0), avg=sum/n;
+  var pos=DATA.filter(function(r){return r.rating>=4;}).length;
+  var refus=DATA.filter(function(r){return r.refusal;}).length;
+  document.getElementById('kpis').innerHTML =
+    card('Total notes', n, '<span class="trendpill up">▲ 5 cette semaine</span>') +
+    card('Moyenne', avg.toFixed(2)+' <small>/ 5</small>', '<span class="trendpill up">▲ 0,3 vs sem. dern.</span>') +
+    card('% satisfaits (≥4★)', Math.round(pos/n*100)+' <small>%</small>', '<span class="trendpill">'+pos+' notes</span>') +
+    card('Réponses « sans réponse »', refus, '<span class="trendpill down">'+Math.round(refus/n*100)+'% — à surveiller</span>');
+}
+function card(l,v,e){ return '<div class="card kpi"><div class="label">'+l+'</div><div class="val">'+v+'</div>'+(e||'')+'</div>'; }
+
+function renderDist(){
+  var c=[0,0,0,0,0]; DATA.forEach(function(r){c[r.rating-1]++;});
+  var max=Math.max.apply(null,c)||1, h='';
+  for(var s=5;s>=1;s--) h+='<div class="distrow"><span class="lab">'+s+'★</span><span class="bar"><i style="width:'+(c[s-1]/max*100)+'%"></i></span><span class="cnt">'+c[s-1]+'</span></div>';
+  document.getElementById('dist').innerHTML=h;
+}
+function renderSpark(){
+  var by={}; DATA.forEach(function(r){ var d=r.created_at.slice(0,10); (by[d]=by[d]||[]).push(r.rating); });
+  var days=Object.keys(by).sort(), pts=days.map(function(d){var a=by[d];return a.reduce(function(x,y){return x+y;},0)/a.length;});
+  var W=600,H=150,pad=18,n=pts.length;
+  function x(i){return pad+i*(W-2*pad)/(n-1);} function y(v){return H-pad-(v-1)/4*(H-2*pad);}
+  var line=pts.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join(' ');
+  var area=line+' L'+x(n-1).toFixed(1)+' '+(H-pad)+' L'+x(0).toFixed(1)+' '+(H-pad)+' Z';
+  var dots=pts.map(function(v,i){return '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(v).toFixed(1)+'" r="3.5" fill="#f5a623"/>';}).join('');
+  var grid=''; [1,2,3,4,5].forEach(function(v){grid+='<line x1="'+pad+'" y1="'+y(v)+'" x2="'+(W-pad)+'" y2="'+y(v)+'" stroke="#2e3645"/><text x="2" y="'+(y(v)+4)+'" fill="#9aa3b2" font-size="10">'+v+'</text>';});
+  document.getElementById('spark').innerHTML='<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f5a623" stop-opacity="0.35"/><stop offset="1" stop-color="#f5a623" stop-opacity="0"/></linearGradient></defs>'+grid+'<path d="'+area+'" fill="url(#g)"/><path d="'+line+'" fill="none" stroke="#f5a623" stroke-width="2.5"/>'+dots;
+}
+
+var current=null, filter='all', q='', tab='rep';
+function filtered(){
+  return DATA.filter(function(r){
+    if(filter==='pos'&&r.rating<4) return false;
+    if(filter==='neg'&&r.rating>2) return false;
+    if(filter==='com'&&!r.comment) return false;
+    if(q){ var hay=(r.email+' '+r.question+' '+r.answer+' '+r.comment+' '+r.sources.map(function(s){return s.file;}).join(' ')).toLowerCase();
+      if(hay.indexOf(q.toLowerCase())<0) return false; }
+    return true;
+  }).sort(function(a,b){return a.created_at<b.created_at?1:-1;});
+}
+function renderList(){
+  var rows=filtered(), el=document.getElementById('list');
+  if(!rows.length){ el.innerHTML='<div style="padding:24px;color:var(--muted)">Aucune note.</div>'; renderDetail(null); return; }
+  if(!current||!rows.some(function(r){return r.id===current;})) current=rows[0].id;
+  el.innerHTML=rows.map(function(r){
+    return '<div class="item'+(r.id===current?' on':'')+'" data-id="'+r.id+'">'+
+      '<div class="avatar" style="background:'+avatarColor(r.email)+'">'+initials(r.email)+'</div>'+
+      '<div style="min-width:0;flex:1">'+
+        '<div style="display:flex;justify-content:space-between;gap:8px"><span class="who">'+r.email.split('@')[0]+'</span><span class="stars">'+starsHTML(r.rating)+'</span></div>'+
+        '<div class="meta">'+fmtDate(r.created_at)+' · '+r.sources.length+' source(s)</div>'+
+        '<div class="snip">'+(r.comment?('💬 '+r.comment):'<em>sans commentaire</em>')+'</div>'+
+      '</div></div>';
+  }).join('');
+  [].forEach.call(el.querySelectorAll('.item'),function(it){ it.onclick=function(){ current=+it.dataset.id; renderList(); }; });
+  renderDetail(DATA.filter(function(r){return r.id===current;})[0]);
+}
+
+function renderDetail(r){
+  var el=document.getElementById('detail');
+  if(!r){ el.innerHTML='<div class="pane" style="color:var(--muted)">Sélectionne une note.</div>'; return; }
+  var head='<div class="dhead"><div class="top"><div><div class="who2">'+esc(r.email)+'</div>'+
+    '<div class="meta2">'+fmtDate(r.created_at)+' &nbsp;'+badge(r.rating)+'</div></div>'+
+    '<div class="bigstars stars">'+starsHTML(r.rating)+'</div></div>'+
+    '<div class="tabs"><button data-t="rep" class="'+(tab==='rep'?'on':'')+'">Réponse</button>'+
+    '<button data-t="src" class="'+(tab==='src'?'on':'')+'">Sources & vérification ('+r.sources.length+')</button></div></div>';
+
+  var pane;
+  if(tab==='rep'){
+    pane='<div class="pane">'+
+      '<div class="block"><div class="t">Question</div><div class="q">'+esc(r.question)+'</div></div>'+
+      '<div class="block"><div class="t">Réponse de l\'assistant</div><div class="a">'+esc(r.answer)+'</div></div>'+
+      (r.comment?'<div class="block"><div class="t">Commentaire de l\'utilisateur</div><div class="c">'+esc(r.comment)+'</div></div>':'')+
+      '</div>';
+  } else {
+    var used=r.chunks.filter(function(c){return c.used;}).length;
+    var srcs=r.sources.map(function(s){
+      return '<div class="srccard"><div class="ic">PDF</div><div><div class="fn">'+esc(s.file)+'</div>'+
+        '<div class="fm">pages '+s.pages.join(', ')+' · pertinence '+s.score+'</div></div>'+
+        '<a href="#" onclick="alert(\'Maquette : ouvrirait la visionneuse PDF avec les passages surlignés.\');return false;">Voir le PDF surligné ↗</a></div>';
+    }).join('') || '<div style="color:var(--muted);font-size:13px;margin-top:8px">Aucune source utilisée (réponse sans appui documentaire / refus).</div>';
+    var chunks=r.chunks.map(function(c){
+      return '<div class="chunk" data-c="'+c.chunkId+'"><div class="ch">'+
+        '<span class="doc">📄 '+esc(c.doc)+'</span>'+
+        '<span class="right"><span class="pill">p.'+c.page+'</span>'+
+        '<span class="pill good">score '+c.score+'</span>'+
+        '<span class="'+(c.used?'used':'unused')+'">'+(c.used?'● utilisé':'○ non utilisé')+'</span></span></div>'+
+        '<div class="body">'+esc(c.text)+'</div></div>';
+    }).join('');
+    pane='<div class="pane">'+
+      '<div class="verifbar"><span>Modèle <b>'+r.model+'</b></span><span>Chunks récupérés <b>'+r.chunks.length+'</b></span>'+
+      '<span>Utilisés dans la réponse <b>'+used+'</b></span><span>Refus <b>'+(r.refusal?'oui':'non')+'</b></span></div>'+
+      '<div class="block"><div class="t">Documents cités</div>'+srcs+'</div>'+
+      '<div class="block"><div class="t">Chunks récupérés (contexte fourni à l\'IA — clique pour déplier)</div>'+chunks+'</div>'+
+      '</div>';
+  }
+  el.innerHTML=head+pane;
+  [].forEach.call(el.querySelectorAll('.tabs button'),function(b){ b.onclick=function(){ tab=b.dataset.t; renderDetail(r); }; });
+  [].forEach.call(el.querySelectorAll('.chunk'),function(ch){ ch.querySelector('.ch').onclick=function(){ ch.classList.toggle('open'); }; });
+}
+
+document.getElementById('seg').onclick=function(e){ if(e.target.tagName!=='BUTTON')return;
+  [].forEach.call(this.children,function(b){b.classList.remove('on');}); e.target.classList.add('on'); filter=e.target.dataset.f; renderList(); };
+document.getElementById('search').oninput=function(){ q=this.value; renderList(); };
+
+renderKpis(); renderDist(); renderSpark(); renderList();
+</script>
+</body>
+</html>
