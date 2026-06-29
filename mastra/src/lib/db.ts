@@ -32,7 +32,7 @@ async function ensureSchema(): Promise<void> {
   return schemaPromise;
 }
 
-async function applySchema(): Promise<void> {
+export async function applySchema(): Promise<void> {
   const sql = `
     CREATE TABLE IF NOT EXISTS users (
       id                  INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -141,13 +141,13 @@ async function applySchema(): Promise<void> {
   schemaApplied = true;
 }
 
-async function query<T extends Record<string, any> = any>(sql: string, params?: any[]): Promise<T[]> {
+export async function query<T extends Record<string, any> = any>(sql: string, params?: any[]): Promise<T[]> {
   await ensureSchema();
   const result = await getPool().query<T>(sql, params);
   return result.rows;
 }
 
-async function run(sql: string, params?: any[]): Promise<void> {
+export async function run(sql: string, params?: any[]): Promise<void> {
   await ensureSchema();
   await getPool().query(sql, params);
 }
@@ -712,4 +712,39 @@ export async function getRatingStats(): Promise<{ count: number; average: number
     `SELECT COUNT(*)::int AS count, AVG(rating)::float AS average FROM user_ratings`,
   );
   return { count: Number(rows[0]?.count ?? 0), average: Number(rows[0]?.average ?? 0) };
+}
+
+// Calcule les KPIs agrégés pour le dashboard admin de notation.
+// distribution = tableau de 5 entiers (index 0 = 1★ … index 4 = 5★).
+// trend = moyenne et nombre de notes par jour, trié par date croissante.
+export async function getRatingDashboardStats(): Promise<{
+  count: number; average: number; pct_high: number; week: number;
+  distribution: number[]; trend: { date: string; avg: number; count: number }[];
+}> {
+  const agg = await query<{ count: string; average: string | null; high: string; week: string }>(
+    `SELECT COUNT(*)::int AS count,
+            AVG(rating)::float AS average,
+            COUNT(*) FILTER (WHERE rating >= 4)::int AS high,
+            COUNT(*) FILTER (WHERE created_at >= to_char((now() - interval '7 days') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))::int AS week
+       FROM user_ratings`,
+  );
+  const dist = await query<{ rating: number; n: string }>(
+    `SELECT rating, COUNT(*)::int AS n FROM user_ratings GROUP BY rating`,
+  );
+  const distribution = [0, 0, 0, 0, 0];
+  for (const d of dist) if (d.rating >= 1 && d.rating <= 5) distribution[d.rating - 1] = Number(d.n);
+  const tr = await query<{ d: string; avg: string; n: string }>(
+    `SELECT substring(created_at for 10) AS d, AVG(rating)::float AS avg, COUNT(*)::int AS n
+       FROM user_ratings GROUP BY d ORDER BY d`,
+  );
+  const a = agg[0] ?? { count: 0, average: 0, high: 0, week: 0 } as any;
+  const count = Number(a.count) || 0;
+  return {
+    count,
+    average: a.average ? Number(a.average) : 0,
+    pct_high: count ? Math.round((Number(a.high) / count) * 100) : 0,
+    week: Number(a.week) || 0,
+    distribution,
+    trend: tr.map((r) => ({ date: r.d, avg: Number(r.avg), count: Number(r.n) })),
+  };
 }
