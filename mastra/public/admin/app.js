@@ -73,21 +73,21 @@ async function apiGet(path) {
 async function apiPost(path, body) {
   var res = await fetch(path, { method: 'POST', headers: csrfHeaders(), body: JSON.stringify(body) });
   if (res.status === 401) { location.href = '/admin/login'; return null; }
-  if (res.status === 403) { showMessage('msg', 'Action non autorisee', true); return null; }
+  if (res.status === 403) { showMessage('msg', 'Action non autorisée', true); return null; }
   return res.json();
 }
 
 async function apiPut(path, body) {
   var res = await fetch(path, { method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(body) });
   if (res.status === 401) { location.href = '/admin/login'; return null; }
-  if (res.status === 403) { showMessage('msg', 'Action non autorisee', true); return null; }
+  if (res.status === 403) { showMessage('msg', 'Action non autorisée', true); return null; }
   return res.json();
 }
 
 async function apiDelete(path) {
   var res = await fetch(path, { method: 'DELETE', headers: csrfHeaders() });
   if (res.status === 401) { location.href = '/admin/login'; return null; }
-  if (res.status === 403) { showMessage('msg', 'Action non autorisee', true); return null; }
+  if (res.status === 403) { showMessage('msg', 'Action non autorisée', true); return null; }
   return res.json();
 }
 
@@ -175,12 +175,12 @@ function buildNav(activePage) {
   });
 
   var logoutLink = createEl('a', { href: '#', onClick: function(e) { e.preventDefault(); logout(); } });
-  logoutLink.innerHTML = navSvg('logout') + '<span>Deconnexion</span>';
+  logoutLink.innerHTML = navSvg('logout') + '<span>Déconnexion</span>';
   nav.appendChild(logoutLink);
 }
 
 function validatePasswordClient(pw) {
-  if (!pw || pw.length < 8) return 'Le mot de passe doit contenir au moins 8 caracteres';
+  if (!pw || pw.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères';
   if (!/[0-9]/.test(pw)) return 'Le mot de passe doit contenir au moins 1 chiffre';
   if (!/[A-Z]/.test(pw)) return 'Le mot de passe doit contenir au moins 1 majuscule';
   return null;
