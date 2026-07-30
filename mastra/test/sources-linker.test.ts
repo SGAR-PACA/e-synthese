@@ -13,6 +13,22 @@ test('réécrit une source italique en lien visionneuse', () => {
   assert.match(out, /- Source 1 : \[A\.pdf\]\(\/v1\/source\/doc-7\?used=c1&sig=X\)/);
 });
 
+test('embarque les jetons de la réponse dans le lien (&a=...) quand fournis', () => {
+  const answer = 'La region prevoit 68 fermetures.\n\n**Sources :**\n- Source 1 : *A.pdf*';
+  const tokens = new Set(['region', 'prevoit', '68', 'fermetures']);
+  const out = injectSourceLinks(answer, [chunk({ documentId: 'doc-7', chunkId: 'c1' })], sign, tokens);
+  const m = out.match(/&a=([^)]+)\)/);
+  assert.ok(m, 'param &a= présent dans le lien');
+  const list = decodeURIComponent(m![1]).split(',');
+  for (const t of ['region', 'prevoit', '68', 'fermetures']) assert.ok(list.includes(t), `a contient ${t}`);
+});
+
+test('aucun &a= si pas de jetons fournis (rétro-compat)', () => {
+  const answer = '**Sources :**\n- Source 1 : *A.pdf*';
+  const out = injectSourceLinks(answer, [chunk({ documentId: 'doc-7', chunkId: 'c1' })], sign);
+  assert.ok(!/&a=/.test(out), 'pas de param a quand non fourni');
+});
+
 test('regroupe plusieurs chunkIds du même document', () => {
   const answer = '**Sources :**\n- Source 1 : *A.pdf*';
   const chunks = [

@@ -12,6 +12,7 @@ import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
 import { injectSourceLinks, createSourcesStreamSplitter, type SignFn } from '../lib/sources-linker.js';
 import { signSourceToken } from '../lib/source-token.js';
+import { answerContentTokens } from '../lib/highlight-align.js';
 
 // Lie un signeur seulement si la clé est configurée ; sinon pas de liens (dégradation douce).
 function sourceSigner(): SignFn | undefined {
@@ -117,7 +118,7 @@ export const chatCompletionsRoute = [
       // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
       maybeScoreLive(question, chunks, clean, config, model);
       const sign = sourceSigner();
-      const answer = sign ? injectSourceLinks(clean, chunks, sign) : clean;
+      const answer = sign ? injectSourceLinks(clean, chunks, sign, answerContentTokens(clean)) : clean;
       return c.json(buildCompletion(modelId, model, answer, result.finishReason || 'stop', result.usage));
     },
   }),
@@ -250,8 +251,11 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
           if (emit.length > 0) send(controller, { content: emit });
         }
         // Bloc Sources final : réécrit en liens signés (ou tel quel si pas de clé).
+        // Les jetons proviennent du corps COMPLET de la réponse (fullText), pas du seul
+        // bloc Sources -> le surlignage ne cible que ce que l'IA a réellement écrit.
+        const answerTokens = answerContentTokens(fullText);
         const tail = splitter.finalize((block) =>
-          sign ? injectSourceLinks(block, chunks, sign) : block,
+          sign ? injectSourceLinks(block, chunks, sign, answerTokens) : block,
         );
         if (tail.length > 0) send(controller, { content: tail });
 

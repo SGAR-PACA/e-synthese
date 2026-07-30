@@ -72,6 +72,13 @@ export async function uploadDocument(formData: FormData) {
     method: 'POST',
     body: formData,
   });
+  // Surface l'erreur Albert au lieu de la ravaler : sans ça, un 429 (quota
+  // 10 req/min) ou un 4xx renvoie un corps sans `id`, et l'appelant lève un
+  // « id manquant » opaque. On propage le statut + le détail Albert.
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Albert POST /v1/documents ${res.status}: ${body.slice(0, 300)}`);
+  }
   return res.json();
 }
 
