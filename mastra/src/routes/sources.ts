@@ -145,6 +145,11 @@ export const sourcesRoute = [
       }
       const documentId = c.req.param('documentId');
       const usedIds = new Set(parseUsedParam(c.req.query('used')));
+      // Jetons de la réponse (`a`) : si présents, on ne surligne QUE ce que l'IA a dit
+      // (intersection réponse ∩ source) au lieu du chunk entier. Déjà normalisés
+      // (a-z0-9) à la génération -> simple split sur virgule.
+      const aRaw = c.req.query('a') ?? '';
+      const answerTokens = aRaw ? new Set(aRaw.split(',').filter(Boolean)) : undefined;
       try {
         const allChunks = await getDocumentChunks(documentId);
         const cited = allChunks.filter((ch) => usedIds.has(ch.id));
@@ -155,13 +160,15 @@ export const sourcesRoute = [
 
         // Méthode principale : alignement du chunk sur le texte structuré du PDF
         // (couverture élevée, contigu, sans parasites). cacheKey = clé S3 immuable.
-        const aligned = computeAlignedHighlights(bytes, cited, acc.file.s3_key_searchable ?? undefined);
+        // answerTokens (optionnel) restreint le surlignage aux mots réellement cités.
+        const aligned = computeAlignedHighlights(bytes, cited, acc.file.s3_key_searchable ?? undefined, answerTokens);
         let pages = aligned.pages;
         let usedFallback = false;
         // Repli CIBLÉ par chunk : chaque chunk non aligné (matched===0) est retenté
         // avec l'ancienne méthode par phrases, puis fusionné (pas de régression de
-        // couverture quand seuls quelques chunks échouent).
-        const failedChunks = cited.filter((_, i) => aligned.report[i].matched === 0);
+        // couverture quand seuls quelques chunks échouent). Désactivé en mode restreint
+        // (answerTokens) : le repli par phrases n'est pas filtré et réintroduirait du bruit.
+        const failedChunks = answerTokens ? [] : cited.filter((_, i) => aligned.report[i].matched === 0);
         if (failedChunks.length) {
           const phrases = failedChunks.flatMap((ch) => splitIntoSearchPhrases(ch.content));
           if (phrases.length) {

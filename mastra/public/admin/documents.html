@@ -98,8 +98,11 @@
       var res = await fetch('/v1/documents', { method: 'POST', headers: headers, body: formData });
       if (res.status === 401) { location.href = '/admin/login'; return; }
       var result = await res.json();
-      if (result && (result.id || result.data)) {
-        showMessage('msg', 'Document uploade avec succes.', false);
+      // L'upload est asynchrone : le back renvoie 202 { fileId, status:'processing' }.
+      // On considère succès si la requête est OK (2xx) et qu'un id de suivi est présent
+      // (fileId = nouveau format ; id/data = ancien format synchrone, rétro-compat).
+      if (res.ok && result && (result.fileId || result.id || result.data)) {
+        showMessage('msg', 'Document envoye — indexation en cours (quelques secondes)…', false);
         loadDocuments(collectionId);
       } else {
         showMessage('msg', (result && result.detail) || 'Erreur lors de l\'upload', true);

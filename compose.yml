@@ -39,6 +39,10 @@ services:
       - ALBERT_API_BASE_URL=${ALBERT_API_BASE_URL:-https://albert.api.etalab.gouv.fr}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY requis}
       - LLM_MODEL=${LLM_MODEL:-albert-large}
+      # Taux d'échantillonnage de la notation LIVE (0 = désactivé). Albert plafonne
+      # à 10 req/min ; à 1.0 l'éval (~4-5 appels juge/réponse) sature le quota → 429
+      # sur le chat ET l'upload de documents. Doit être mappé ici pour atteindre le conteneur.
+      - EVAL_SAMPLING_RATE=${EVAL_SAMPLING_RATE:-1.0}
       - PORT=4111
       - DATABASE_URL=postgresql://mastra:${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}@mastra_postgresql:5432/mastra
       # --- Visionneuse de sources (phase Ingestion) ---

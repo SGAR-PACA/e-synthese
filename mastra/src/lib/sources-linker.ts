@@ -30,9 +30,22 @@ function indexByName(usedChunks: RagChunk[]): Map<string, NameEntry> {
   return byName;
 }
 
-export function injectSourceLinks(answer: string, usedChunks: RagChunk[], sign: SignFn): string {
+export function injectSourceLinks(
+  answer: string,
+  usedChunks: RagChunk[],
+  sign: SignFn,
+  // Jetons distinctifs de la réponse : embarqués dans le lien (`&a=...`) pour que la
+  // visionneuse ne surligne QUE ce que l'IA a dit (intersection réponse ∩ source),
+  // au lieu du chunk entier. Paramètre non signé : il ne fait que restreindre le
+  // surlignage (aucun accès élargi), donc sans impact sécurité.
+  answerTokens?: Set<string>,
+): string {
   const byName = indexByName(usedChunks);
   if (byName.size === 0) return answer;
+  const aParam =
+    answerTokens && answerTokens.size
+      ? `&a=${encodeURIComponent([...answerTokens].slice(0, 100).join(','))}`
+      : '';
   return answer
     .split('\n')
     .map((line) => {
@@ -43,7 +56,7 @@ export function injectSourceLinks(answer: string, usedChunks: RagChunk[], sign: 
       const entry = byName.get(name);
       if (!entry) return line;
       const query = sign(entry.documentId, entry.chunkIds);
-      return `${prefix}[${escapeLinkText(name)}](/v1/source/${encodeURIComponent(entry.documentId)}?${query})`;
+      return `${prefix}[${escapeLinkText(name)}](/v1/source/${encodeURIComponent(entry.documentId)}?${query}${aParam})`;
     })
     .join('\n');
 }

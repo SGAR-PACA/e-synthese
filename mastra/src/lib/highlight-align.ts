@@ -35,6 +35,36 @@ export function normalizeWord(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Mots-outils FR fréquents : exclus des jetons « distinctifs » de la réponse, sinon
+// on re-surlignerait « dans / cette / pour … » un peu partout dans le PDF.
+const FR_STOPWORDS = new Set([
+  'dans', 'pour', 'avec', 'sans', 'sous', 'elle', 'vous', 'nous', 'leur', 'leurs',
+  'cette', 'ces', 'les', 'des', 'une', 'aux', 'par', 'sur', 'est', 'sont', 'ete',
+  'avoir', 'etre', 'plus', 'moins', 'tres', 'mais', 'donc', 'ainsi', 'entre', 'selon',
+  'depuis', 'comme', 'fait', 'peut', 'aussi', 'alors', 'alorsque', 'lorsque', 'quand',
+  'chaque', 'tout', 'tous', 'toute', 'toutes', 'meme', 'entre', 'pres', 'lors',
+]);
+
+// Extrait de la réponse de l'IA les jetons « distinctifs » à surligner : chiffres
+// significatifs (≥2 chiffres) et mots ≥5 lettres hors mots-outils. On ignore le bloc
+// « Sources » final (liste des liens) pour ne garder que le corps de la réponse.
+// Sert à ne surligner dans le PDF QUE ce que la réponse dit réellement, pas tout le chunk.
+export function answerContentTokens(answer: string): Set<string> {
+  const out = new Set<string>();
+  if (!answer) return out;
+  const body = answer.split(/\n\s*\*{0,2}\s*Sources\b/i)[0];
+  for (const raw of body.split(/\s+/)) {
+    const norm = normalizeWord(raw);
+    if (!norm) continue;
+    if (/^[0-9]+$/.test(norm)) {
+      if (norm.length >= 2) out.add(norm); // chiffres : ≥2 (évite « 1 », « 6 » ubiquistes)
+    } else if (norm.length >= 5 && !FR_STOPWORDS.has(norm)) {
+      out.add(norm);
+    }
+  }
+  return out;
+}
+
 function unionQuad(r: { x: number; y: number; w: number; h: number } | null, quad: number[]) {
   const xs = [quad[0], quad[2], quad[4], quad[6]];
   const ys = [quad[1], quad[3], quad[5], quad[7]];
@@ -234,6 +264,10 @@ export function computeAlignedHighlights(
   pdfBytes: Uint8Array,
   chunks: Array<{ id?: string; content: string }>,
   cacheKey?: string,
+  // Si fourni : on ne surligne QUE les mots du chunk présents dans la réponse de l'IA
+  // (intersection réponse ∩ source) au lieu du chunk entier. `report.matched` reste
+  // le nombre de mots ALIGNÉS (inchangé) pour ne pas fausser la logique de repli amont.
+  answerTokens?: Set<string>,
 ): AlignResult {
   const { docWords, dims, posIndex } = getDocIndex(pdfBytes, cacheKey);
 
@@ -251,7 +285,10 @@ export function computeAlignedHighlights(
     const wordCount = lines.reduce((s, l) => s + l.length, 0);
     const matched = alignChunkLines(lines, docWords, posIndex);
     report.push({ id: ch.id, words: wordCount, matched: matched.length });
-    for (const di of matched) {
+    // Restriction « réponse ∩ source » : on ne garde que les mots alignés qui
+    // apparaissent aussi dans la réponse de l'IA. `matched` (rapport) reste complet.
+    const kept = answerTokens ? matched.filter((di) => answerTokens.has(docWords[di].norm)) : matched;
+    for (const di of kept) {
       const wd = docWords[di];
       let pageLines = perPage.get(wd.page);
       if (!pageLines) { pageLines = new Map(); perPage.set(wd.page, pageLines); }
