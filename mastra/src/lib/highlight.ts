@@ -9,13 +9,28 @@ export interface PageHighlights {
   rects: { x: number; y: number; w: number; h: number }[];
 }
 
-// Localise chaque phrase dans le PDF. mupdf : page.search -> QuadPoint[][] ;
-// getBounds -> [ulx,uly,lrx,lry] (origine haut-gauche). Best-effort : une phrase
-// introuvable est simplement ignorée (repli sans surlignage côté client).
-export function computeHighlights(pdfBytes: Uint8Array, phrases: string[]): PageHighlights[] {
+// Rapport de diagnostic par phrase : où (quelles pages) et combien de fois chaque
+// phrase a été trouvée. Sert au mode debug pour comprendre "à moitié" (taux de match)
+// et "zones sans rapport" (phrase trouvée sur plusieurs pages).
+export interface PhraseReport {
+  phrase: string;
+  pages: { page: number; matches: number }[];
+  totalMatches: number;
+}
+
+export interface HighlightResult {
+  pages: PageHighlights[];
+  report: PhraseReport[];
+}
+
+// Cœur : localise chaque phrase dans le PDF ET produit le rapport par phrase.
+// mupdf : page.search -> QuadPoint[][] ; getBounds -> [ulx,uly,lrx,lry] (origine
+// haut-gauche). Best-effort : une phrase introuvable est simplement ignorée.
+export function computeHighlightsDiag(pdfBytes: Uint8Array, phrases: string[]): HighlightResult {
   const doc = mupdf.PDFDocument.openDocument(pdfBytes, 'application/pdf');
   try {
     const out: PageHighlights[] = [];
+    const report: PhraseReport[] = phrases.map((phrase) => ({ phrase, pages: [], totalMatches: 0 }));
     const n = doc.countPages();
     for (let i = 0; i < n; i++) {
       const page = doc.loadPage(i);
@@ -24,24 +39,33 @@ export function computeHighlights(pdfBytes: Uint8Array, phrases: string[]): Page
         const width = b[2] - b[0];
         const height = b[3] - b[1];
         const rects: { x: number; y: number; w: number; h: number }[] = [];
-        for (const phrase of phrases) {
+        phrases.forEach((phrase, pi) => {
           let results: number[][][] = [];
           try {
             results = page.search(phrase) as unknown as number[][][];
           } catch {
             results = [];
           }
+          if (results.length) {
+            report[pi].pages.push({ page: i + 1, matches: results.length });
+            report[pi].totalMatches += results.length;
+          }
           for (const quads of results) {
             for (const quad of quads) rects.push(rectFromQuad(quad));
           }
-        }
+        });
         if (rects.length) out.push({ page: i + 1, width, height, rects });
       } finally {
         page.destroy();
       }
     }
-    return out;
+    return { pages: out, report };
   } finally {
     doc.destroy();
   }
+}
+
+// API publique inchangée : ne renvoie que les zones de surlignage.
+export function computeHighlights(pdfBytes: Uint8Array, phrases: string[]): PageHighlights[] {
+  return computeHighlightsDiag(pdfBytes, phrases).pages;
 }
