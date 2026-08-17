@@ -27,7 +27,7 @@
   "oauth2DevicePollingInterval": 5,
   "enabled": true,
   "sslRequired": "external",
-  "registrationAllowed": true,
+  "registrationAllowed": false,
   "registrationEmailAsUsername": false,
   "rememberMe": true,
   "verifyEmail": false,
@@ -1657,7 +1657,7 @@
         {
           "authenticator": "conditional-user-configured",
           "authenticatorFlow": false,
-          "requirement": "REQUIRED",
+          "requirement": "DISABLED",
           "priority": 10,
           "autheticatorFlow": false,
           "userSetupAllowed": false
@@ -2010,7 +2010,7 @@
         },
         {
           "authenticatorFlow": true,
-          "requirement": "CONDITIONAL",
+          "requirement": "REQUIRED",
           "priority": 20,
           "autheticatorFlow": true,
           "flowAlias": "Browser - Conditional OTP",
