@@ -466,6 +466,10 @@ services:
         # chaque déploiement). Corrige aussi une éventuelle réactivation en console.
         "$$KCADM" update realms/$$REALM --config "$$CFG" -s registrationAllowed=false
         echo "Auto-inscription desactivee (registrationAllowed=false)."
+        # Français par défaut (i18n activée, locale par défaut = fr, anglais gardé).
+        "$$KCADM" update realms/$$REALM --config "$$CFG" \
+          -s internationalizationEnabled=true -s 'supportedLocales=["fr","en"]' -s defaultLocale=fr
+        echo "Langue par defaut = francais."
         # Crée le client public s'il est absent.
         ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' || true)
         if [ -z "$$ID" ]; then

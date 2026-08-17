@@ -16,10 +16,13 @@ if (!isInitialized && !i18next.isInitialized) {
     .use(initReactI18next)
     .init({
       resources,
-      fallbackLng: 'en',
+      fallbackLng: 'fr',
       debug: false,
       detection: {
-        order: ['cookie', 'navigator'],
+        // Français par défaut pour tous : on ne détecte plus la langue du
+        // navigateur ; seul le cookie (choix explicite via le sélecteur) prime,
+        // sinon on retombe sur `fallbackLng: 'fr'`.
+        order: ['cookie'],
         caches: ['cookie'],
         lookupCookie: 'conversations_language',
         cookieMinutes: 525600,
