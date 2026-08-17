@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Synthese Admin - Groupes</title>
+  <link rel="stylesheet" href="/admin/pico.min.css">
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <nav id="main-nav"></nav>
+  <h2>Groupes → Collections</h2>
+  <div id="msg" class="message"></div>
+  <p>
+    Chaque <strong>groupe Keycloak</strong> (une administration) donne accès aux collections cochées.
+    Un utilisateur voit l'<strong>union</strong> des collections de ses groupes. Le groupe
+    <code>admin</code> voit tout le corpus.
+  </p>
+
+  <article>
+    <header id="form-title">Ajouter / modifier un groupe</header>
+    <label for="group-name">Nom du groupe (identique à Keycloak, ex : <code>sgar</code>, <code>pref13</code>)</label>
+    <input type="text" id="group-name" placeholder="sgar" required>
+    <fieldset id="collections-checks"><legend>Collections accessibles</legend>
+      <p aria-busy="true">Chargement des collections…</p>
+    </fieldset>
+    <button id="save-btn">Enregistrer le groupe</button>
+    <button id="reset-btn" class="outline secondary">Annuler</button>
+  </article>
+
+  <hr>
+  <h3>Groupes existants</h3>
+  <div id="groups-list"><p aria-busy="true">Chargement…</p></div>
+
+  <script src="/admin/app.js"></script>
+  <script>
+    var collections = [];      // [{id, name}]
+    var mappings = {};         // { groupName: [collectionId, ...] }
+
+    function collectionName(id) {
+      var c = collections.find(function (x) { return x.id === id; });
+      return c ? c.name : ('#' + id);
+    }
+
+    async function loadAll() {
+      var cols = await apiGet('/v1/collections');
+      collections = (cols && cols.data) || [];
+      var res = await apiGet('/v1/group-collections');
+      mappings = (res && res.groups) || {};
+      renderChecks([]);
+      renderList();
+    }
+
+    function renderChecks(selectedIds) {
+      var fs = document.getElementById('collections-checks');
+      clearEl(fs);
+      fs.appendChild(createEl('legend', { textContent: 'Collections accessibles' }));
+      if (!collections.length) {
+        fs.appendChild(createEl('p', { textContent: 'Aucune collection. Créez-en dans l\'onglet Collections.' }));
+        return;
+      }
+      collections.forEach(function (col) {
+        var cb = createEl('input', { type: 'checkbox', className: 'grp-col', value: String(col.id) });
+        cb.checked = selectedIds.indexOf(col.id) !== -1;
+        fs.appendChild(createEl('label', {}, [cb, document.createTextNode(' ' + col.name + ' (ID: ' + col.id + ')')]));
+      });
+    }
+
+    function renderList() {
+      var container = document.getElementById('groups-list');
+      clearEl(container);
+      var names = Object.keys(mappings);
+      if (!names.length) {
+        container.appendChild(createEl('p', { textContent: 'Aucun groupe configuré pour l\'instant.' }));
+        return;
+      }
+      names.forEach(function (name) {
+        var ids = mappings[name] || [];
+        var labels = ids.map(collectionName).join(', ') || 'aucune collection';
+        var card = createEl('div', { className: 'collection-card' }, [
+          createEl('div', {}, [
+            createEl('strong', { textContent: name }),
+            createEl('br'),
+            createEl('small', { textContent: labels }),
+          ]),
+          createEl('div', {}, [
+            createEl('button', { className: 'outline', textContent: 'Modifier', onClick: function () { editGroup(name); } }),
+            createEl('button', { className: 'outline secondary', textContent: 'Supprimer', onClick: function () { deleteGroup(name); } }),
+          ]),
+        ]);
+        container.appendChild(card);
+      });
+    }
+
+    function editGroup(name) {
+      document.getElementById('group-name').value = name;
+      document.getElementById('form-title').textContent = 'Modifier le groupe « ' + name + ' »';
+      renderChecks(mappings[name] || []);
+      window.scrollTo(0, 0);
+    }
+
+    function resetForm() {
+      document.getElementById('group-name').value = '';
+      document.getElementById('form-title').textContent = 'Ajouter / modifier un groupe';
+      renderChecks([]);
+    }
+
+    document.getElementById('reset-btn').addEventListener('click', function (e) { e.preventDefault(); resetForm(); });
+
+    document.getElementById('save-btn').addEventListener('click', async function () {
+      var name = document.getElementById('group-name').value.trim();
+      if (!name) { showMessage('msg', 'Le nom du groupe est requis.', true); return; }
+      var checked = Array.from(document.querySelectorAll('.grp-col:checked')).map(function (el) { return parseInt(el.value, 10); });
+      var result = await apiPut('/v1/group-collections/' + encodeURIComponent(name), { collectionIds: checked });
+      if (result && result.ok) {
+        showMessage('msg', 'Groupe « ' + name + ' » enregistré (' + checked.length + ' collection(s)).', false);
+        resetForm();
+        await loadAll();
+      } else {
+        showMessage('msg', (result && result.error) || 'Erreur', true);
+      }
+    });
+
+    async function deleteGroup(name) {
+      if (!confirm('Supprimer le mapping du groupe « ' + name + ' » ? Les membres de ce groupe perdront l\'accès à ces collections.')) return;
+      await apiDelete('/v1/group-collections/' + encodeURIComponent(name));
+      showMessage('msg', 'Groupe supprimé.', false);
+      await loadAll();
+    }
+
+    (async function () {
+      await checkAuth();
+      buildNav('groups');
+      await loadAll();
+    })();
+  </script>
+</body>
+</html>

@@ -51,6 +51,7 @@ export const adminUiRoute = [
   registerApiRoute('/admin/reset-password', { method: 'GET', handler: serveStatic('admin/reset-password.html') }),
   registerApiRoute('/admin/settings', { method: 'GET', handler: serveStatic('admin/config.html') }),
   registerApiRoute('/admin/collections', { method: 'GET', handler: serveStatic('admin/collections.html') }),
+  registerApiRoute('/admin/groups', { method: 'GET', handler: serveStatic('admin/groups.html') }),
   registerApiRoute('/admin/documents', { method: 'GET', handler: serveStatic('admin/documents.html') }),
   registerApiRoute('/admin/test', { method: 'GET', handler: serveStatic('admin/test.html') }),
   registerApiRoute('/admin/users-page', { method: 'GET', handler: serveStatic('admin/users.html') }),

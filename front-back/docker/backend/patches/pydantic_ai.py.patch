@@ -1,0 +1,22 @@
+--- a/chat/clients/pydantic_ai.py
++++ b/chat/clients/pydantic_ai.py
+@@ -125,6 +125,7 @@
+ 
+ from chat import models
+ from chat.agents.conversation import ConversationAgent, TitleGenerationAgent
++from chat.user_token_context import current_user_token
+ from chat.agents.local_media_url_processors import (
+     update_history_local_urls,
+     update_local_urls,
+@@ -245,6 +246,11 @@
+         """
+         self.conversation = conversation
+         self.user = user  # authenticated user only
++
++        # E-Synthèse : mémorise le token OIDC de l'utilisateur (stocké en session
++        # via OIDC_STORE_ACCESS_TOKEN) AVANT de construire les agents, pour que
++        # prepare_custom_model le forwarde à Mastra (en-tête X-User-Token).
++        current_user_token.set(session.get("oidc_access_token") if session else None)
+         self.model_hrid = model_hrid or settings.LLM_DEFAULT_MODEL_HRID  # HRID of the model to use
+         self.language = language  # might be None
+         self._last_stop_check = 0

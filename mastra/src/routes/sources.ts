@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { requireSourceSession } from './sources-auth.js';
 import { verifySourceToken } from '../lib/source-token.js';
 import { getDocumentFileByAlbertId, logAudit, type DocumentFile } from '../lib/db.js';
+import { resolveAllowedCollections } from '../lib/collection-scope.js';
 import { getPdfStream } from '../lib/storage.js';
 import { getDocumentChunks } from '../lib/albert-client.js';
 import { computeHighlights, type PageHighlights } from '../lib/highlight.js';
@@ -44,6 +45,18 @@ async function verifyAccess(c: any): Promise<{ sub: string; file: DocumentFile }
   if (!file) return c.text('Document introuvable.', 404);
   if (file.status === 'processing') return c.html(waitingPage(), 200);
   if (file.status === 'failed' || !file.s3_key_searchable) return c.text('Document indisponible.', 404);
+
+  // 2b — cloisonnement par groupe : même si le lien signé est valide, l'utilisateur
+  // doit être autorisé pour la collection du document (empêche l'accès via un lien
+  // partagé/fuité vers un document d'une autre administration). Admin (null) → tout ;
+  // sinon la collection du doc doit être autorisée ; un doc sans collection n'est pas
+  // autorisable → refus. Escape hatch de transition cohérent avec le chat.
+  if (process.env.MASTRA_REQUIRE_USER_TOKEN !== 'false') {
+    const allowed = await resolveAllowedCollections(session.groups);
+    const cid = file.collection_id;
+    const authorized = allowed === null || (cid != null && allowed.includes(cid));
+    if (!authorized) return c.text('Accès non autorisé à ce document.', 403);
+  }
 
   return { sub: session.sub, file };
 }

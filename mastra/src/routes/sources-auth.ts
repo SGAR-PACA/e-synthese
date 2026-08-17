@@ -46,8 +46,8 @@ export function constantTimeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ba, bb);
 }
 
-// Garde : session RP valide -> { sub }. Sinon -> 302 vers Keycloak (login silencieux).
-export async function requireSourceSession(c: any): Promise<{ sub: string } | Response> {
+// Garde : session RP valide -> { sub, groups }. Sinon -> 302 vers Keycloak (login silencieux).
+export async function requireSourceSession(c: any): Promise<{ sub: string; groups: string[] } | Response> {
   const key = rpKey();
   const session = readSourceSession(c.req.header('cookie'), key, Date.now());
   if (session) return session;
@@ -81,12 +81,12 @@ export const sourcesAuthRoute = [
       }
 
       try {
-        const { sub } = await completeLogin(code, tx);
+        const { sub, groups } = await completeLogin(code, tx);
         resetRateLimit(`oidc:${ip}`);
         // deux Set-Cookie : pose la session RP ET efface le cookie de transaction.
         const headers = new Headers();
         headers.append('Location', safeReturnUrl(tx.returnUrl));
-        headers.append('Set-Cookie', makeSourceSessionCookie(sub, key));
+        headers.append('Set-Cookie', makeSourceSessionCookie(sub, groups, key));
         headers.append('Set-Cookie', clearTxCookie());
         return new Response(null, { status: 302, headers });
       } catch (err) {

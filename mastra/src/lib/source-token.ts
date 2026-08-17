@@ -42,8 +42,18 @@ function getKey(): string {
   return k;
 }
 
-const TEN_YEARS_MS = 10 * 365 * 24 * 3600 * 1000;
+// Durée de vie du lien de source signé. Un TTL long facilite la relecture de
+// vieilles conversations (les liens sont stockés dans l'historique Django) mais
+// allonge la fenêtre de rejeu d'une URL fuitée. Défaut : 30 jours ; ajustable
+// via MASTRA_SOURCE_LINK_TTL_SECONDS. (La vraie garde reste la liaison à
+// l'utilisateur + le contrôle de collection — cf. 2b.)
+const DEFAULT_SOURCE_LINK_TTL_SECONDS = 30 * 24 * 3600;
+
+function sourceLinkTtlMs(): number {
+  const s = Number(process.env.MASTRA_SOURCE_LINK_TTL_SECONDS);
+  return (Number.isFinite(s) && s > 0 ? s : DEFAULT_SOURCE_LINK_TTL_SECONDS) * 1000;
+}
 
 export function signSourceToken(documentId: string, chunkIds: string[]): string {
-  return buildSignedQuery(documentId, chunkIds, Date.now() + TEN_YEARS_MS, getKey());
+  return buildSignedQuery(documentId, chunkIds, Date.now() + sourceLinkTtlMs(), getKey());
 }

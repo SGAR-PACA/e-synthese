@@ -11,9 +11,8 @@
   <nav id="main-nav"></nav>
   <h2>Collections</h2>
   <div id="msg" class="message"></div>
-  <p>Les collections cochées sont interrogées automatiquement à chaque requête RAG.</p>
+  <p>Créez une collection par administration. L'accès est piloté par les <a href="/admin/groups">groupes</a> : chaque groupe voit les collections qui lui sont affectées.</p>
   <div id="collections-list"><p aria-busy="true">Chargement des collections...</p></div>
-  <button id="save-btn" style="margin-top:1rem;">Sauvegarder la selection</button>
   <hr>
   <details>
     <summary>Créer une nouvelle collection</summary>
@@ -27,11 +26,7 @@
   </details>
   <script src="/admin/app.js"></script>
   <script>
-    var activeCollections = [];
-
     async function loadCollections() {
-      var config = await apiGet('/admin/config');
-      activeCollections = (config && config.defaultCollections) || [];
       var collections = await apiGet('/v1/collections');
       var container = document.getElementById('collections-list');
       clearEl(container);
@@ -41,16 +36,10 @@
         return;
       }
       items.forEach(function(col) {
-        var isActive = activeCollections.indexOf(col.id) !== -1;
-        var checkbox = createEl('input', { type: 'checkbox', className: 'col-check', value: String(col.id) });
-        checkbox.checked = isActive;
-        var card = createEl('div', { className: 'collection-card' + (isActive ? ' active' : '') }, [
+        var card = createEl('div', { className: 'collection-card' }, [
           createEl('div', {}, [
-            createEl('label', {}, [
-              checkbox,
-              createEl('strong', { textContent: ' ' + col.name }),
-              document.createTextNode(' (ID: ' + col.id + ')'),
-            ]),
+            createEl('strong', { textContent: col.name }),
+            document.createTextNode(' (ID: ' + col.id + ')'),
             createEl('br'),
             createEl('small', { textContent: col.description || 'Pas de description' }),
           ]),
@@ -59,17 +48,6 @@
         container.appendChild(card);
       });
     }
-
-    document.getElementById('save-btn').addEventListener('click', async function() {
-      var checked = Array.from(document.querySelectorAll('.col-check:checked')).map(function(el) { return parseInt(el.value, 10); });
-      var result = await apiPut('/admin/config', { defaultCollections: checked });
-      if (result && result.ok) {
-        showMessage('msg', checked.length + ' collection(s) active(s) sauvegardee(s).', false);
-        await loadCollections();
-      } else {
-        showMessage('msg', (result && result.error) || 'Erreur', true);
-      }
-    });
 
     document.getElementById('create-form').addEventListener('submit', async function(e) {
       e.preventDefault();

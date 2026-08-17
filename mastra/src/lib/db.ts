@@ -48,6 +48,15 @@ export async function applySchema(): Promise<void> {
       collection_id  INT NOT NULL,
       PRIMARY KEY (user_id, collection_id)
     );
+    -- Chantier 2 : cloisonnement du RAG par groupe Keycloak (administrations).
+    -- group_collections : mapping groupe Keycloak -> collections (géré en admin).
+    -- L'accès d'un utilisateur = union des collections de ses groupes (un user
+    -- peut être dans plusieurs groupes → pas besoin d'exceptions individuelles).
+    CREATE TABLE IF NOT EXISTS group_collections (
+      group_name     TEXT NOT NULL,
+      collection_id  INT NOT NULL,
+      PRIMARY KEY (group_name, collection_id)
+    );
     CREATE TABLE IF NOT EXISTS invitations (
       id             INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       code_hash      TEXT UNIQUE NOT NULL,
@@ -284,6 +293,49 @@ export async function setUserCollections(userId: number, collectionIds: number[]
   } finally {
     client.release();
   }
+}
+
+// ---- Cloisonnement RAG par groupe Keycloak (Chantier 2) ----
+
+// Collections autorisées pour un ensemble de groupes Keycloak (union, dédupliquée).
+export async function getCollectionsForGroups(groups: string[]): Promise<number[]> {
+  if (groups.length === 0) return [];
+  const rows = await query<{ collection_id: number }>(
+    'SELECT DISTINCT collection_id FROM group_collections WHERE group_name = ANY($1)',
+    [groups],
+  );
+  return rows.map((r) => r.collection_id);
+}
+
+// Toutes les paires (groupe, collection) pour l'écran d'admin.
+export async function listGroupCollections(): Promise<{ group_name: string; collection_id: number }[]> {
+  return query<{ group_name: string; collection_id: number }>(
+    'SELECT group_name, collection_id FROM group_collections ORDER BY group_name, collection_id',
+  );
+}
+
+// Remplace atomiquement le jeu de collections d'un groupe.
+export async function setGroupCollections(group: string, collectionIds: number[]): Promise<void> {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM group_collections WHERE group_name = $1', [group]);
+    for (const cid of collectionIds) {
+      await client.query('INSERT INTO group_collections (group_name, collection_id) VALUES ($1, $2)', [group, cid]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Supprime entièrement le mapping d'un groupe.
+export async function deleteGroupMapping(group: string): Promise<void> {
+  await run('DELETE FROM group_collections WHERE group_name = $1', [group]);
 }
 
 // ---- Sessions ----

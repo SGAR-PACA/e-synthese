@@ -1,4 +1,5 @@
 export { collectionsRoute } from './collections';
+export { groupCollectionsRoute } from './group-collections';
 export { documentsRoute } from './documents';
 export { searchRoute } from './search';
 export { chatCompletionsRoute } from './chat-completions';
