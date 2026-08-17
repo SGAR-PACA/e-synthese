@@ -136,6 +136,7 @@ function buildNav(activePage) {
   if (currentUser.role === 'admin') {
     links.push({ href: '/admin/settings', label: 'Configuration', page: 'config' });
     links.push({ href: '/admin/collections', label: 'Collections', page: 'collections' });
+    links.push({ href: '/admin/groups', label: 'Groupes', page: 'groups' });
   }
 
   links.push({ href: '/admin/documents', label: 'Documents', page: 'documents' });
@@ -154,6 +155,7 @@ function buildNav(activePage) {
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>',
     config: '<line x1="21" y1="6" x2="3" y2="6"/><circle cx="9" cy="6" r="2"/><line x1="21" y1="12" x2="3" y2="12"/><circle cx="15" cy="12" r="2"/><line x1="21" y1="18" x2="3" y2="18"/><circle cx="9" cy="18" r="2"/>',
     collections: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    groups: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     documents: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
     test: '<path d="M10 2v7.5L4.5 19a1.5 1.5 0 0 0 1.3 2.3h12.4a1.5 1.5 0 0 0 1.3-2.3L14 9.5V2"/><line x1="8.5" y1="2" x2="15.5" y2="2"/><line x1="7" y1="15" x2="17" y2="15"/>',
     users: '<path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>',

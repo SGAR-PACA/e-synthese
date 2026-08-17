@@ -8,6 +8,8 @@ import { contentToText } from '../lib/openai-content.js';
 import { planifier } from '../mastra/pipeline/planner.js';
 import { rechercherMultiple } from '../mastra/pipeline/retrieval.js';
 import { construirePromptRedaction } from '../mastra/pipeline/writer.js';
+import { verifyForwardedUserToken } from '../lib/chat-auth.js';
+import { extractGroups, resolveAllowedCollections } from '../lib/collection-scope.js';
 import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
 import { injectSourceLinks, createSourcesStreamSplitter, type SignFn } from '../lib/sources-linker.js';
@@ -46,6 +48,19 @@ export const chatCompletionsRoute = [
     handler: async (c) => {
       const unauthorized = requireApiKey(c);
       if (unauthorized) return unauthorized;
+
+      // Chantier 2 — cloisonnement par groupe. Le token de l'utilisateur final
+      // (transmis par Django via `X-User-Token`) détermine les collections
+      // autorisées. Absent → 401 (fail-closed), SAUF mode transition explicite
+      // (`MASTRA_REQUIRE_USER_TOKEN=false`) → `null` = non restreint. Invalide → 401.
+      // `null` = non restreint (transition/admin) ; tableau = restreint à ces collections.
+      const userToken = await verifyForwardedUserToken(c);
+      if (userToken instanceof Response) return userToken;
+      let allowedCollections: number[] | null = null;
+      if (userToken) {
+        allowedCollections = await resolveAllowedCollections(extractGroups(userToken));
+      }
+
       const body = await c.req.json();
       const { messages = [], stream = false, temperature, max_tokens } = body as {
         messages: OpenAIMessage[];
@@ -97,7 +112,7 @@ export const chatCompletionsRoute = [
 
       // ───────────── Mode streaming ─────────────
       if (stream) {
-        const sseStream = pipelineSSE({ question, planner, writer, writerSettings, config, model });
+        const sseStream = pipelineSSE({ question, planner, writer, writerSettings, config, model, allowedCollections });
         return new Response(sseStream, { headers: SSE_HEADERS });
       }
 
@@ -109,7 +124,7 @@ export const chatCompletionsRoute = [
         return c.json(buildCompletion(modelId, model, plan.reponseDirecte, 'stop', undefined));
       }
 
-      const { chunks } = await rechercherMultiple(plan.requetes, question);
+      const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
       const result: any = await writer.generate(
         [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
         { modelSettings: writerSettings },
@@ -193,13 +208,14 @@ interface PipelineSSEArgs {
   writerSettings: { temperature: number; maxOutputTokens?: number };
   config: AppConfig;
   model: string;
+  allowedCollections: number[] | null;
 }
 
 // Orchestre les 3 étapes À L'INTÉRIEUR du flux SSE : chaque étape émet son
 // libellé de progression (compartiment "réflexion") juste avant l'opération
 // lente, puis le rédacteur streame la réponse mot à mot.
 function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
-  const { question, planner, writer, writerSettings, config, model } = args;
+  const { question, planner, writer, writerSettings, config, model, allowedCollections } = args;
   const encoder = new TextEncoder();
   const id = `chatcmpl-${randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -231,7 +247,7 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         }
 
         etape(controller, 'Recherche dans les documents…');
-        const { chunks } = await rechercherMultiple(plan.requetes, question);
+        const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
 
         etape(controller, 'Rédaction de la réponse…');
         const result: any = await writer.stream(

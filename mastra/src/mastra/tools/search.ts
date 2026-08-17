@@ -2,6 +2,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import * as albert from '../../lib/albert-client.js';
 import { getConfig } from '../../lib/config.js';
+import { getAllCollectionIds } from '../../lib/collections-cache.js';
 
 export const searchTool = createTool({
   id: 'search-rag',
@@ -22,12 +23,13 @@ export const searchTool = createTool({
   }),
   execute: async ({ query }) => {
     const config = await getConfig();
-    if (config.defaultCollections.length === 0) {
+    const collections = await getAllCollectionIds();
+    if (collections.length === 0) {
       return { chunks: [] };
     }
     const results = await albert.search({
       query,
-      collections: config.defaultCollections,
+      collections,
       k: config.searchK,
     });
     const chunks = (results.data || [])

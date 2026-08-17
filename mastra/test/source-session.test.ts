@@ -20,9 +20,17 @@ test('verify : mauvaise clé -> null', () => {
   assert.equal(verifyCookieValue(v, 'autre-cle'), null);
 });
 
-test('readSourceSession : session valide', () => {
+test('readSourceSession : session valide (avec groupes)', () => {
+  const v = signCookieValue({ sub: 'u', groups: ['sgar', 'pref13'], exp: 9_000_000_000_000 }, KEY, 'session');
+  assert.deepEqual(readSourceSession(`a=b; src_session=${v}; c=d`, KEY, Date.now()), {
+    sub: 'u',
+    groups: ['sgar', 'pref13'],
+  });
+});
+
+test('readSourceSession : groupes absents -> [] (ancien cookie)', () => {
   const v = signCookieValue({ sub: 'u', exp: 9_000_000_000_000 }, KEY, 'session');
-  assert.deepEqual(readSourceSession(`a=b; src_session=${v}; c=d`, KEY, Date.now()), { sub: 'u' });
+  assert.deepEqual(readSourceSession(`src_session=${v}`, KEY, Date.now()), { sub: 'u', groups: [] });
 });
 
 test('readSourceSession : session expirée -> null', () => {
@@ -31,7 +39,7 @@ test('readSourceSession : session expirée -> null', () => {
 });
 
 test('makeSourceSessionCookie : attributs de sécurité', () => {
-  const c = makeSourceSessionCookie('u', KEY);
+  const c = makeSourceSessionCookie('u', ['sgar'], KEY);
   assert.match(c, /^src_session=/);
   assert.match(c, /HttpOnly/);
   assert.match(c, /SameSite=Lax/);

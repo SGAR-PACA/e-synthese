@@ -219,7 +219,12 @@ services:
     restart: on-failure
 
   app-dev:
-    image: lasuite/conversations-backend:main@sha256:337516bd02be0e93e5720016bc8c8faab9df263e33931e76d7a015a4e48f2613
+    # Image DÉRIVÉE de lasuite/conversations-backend (commit b8b5630) : patch
+    # E-Synthèse qui forwarde le token utilisateur à Mastra (X-User-Token) pour
+    # le cloisonnement RAG par groupe. Voir front-back/docker/backend/.
+    build:
+      context: ./front-back/docker/backend
+      dockerfile: Dockerfile
     platform: linux/amd64
     restart: always
     environment:
@@ -251,6 +256,9 @@ services:
       - LOGIN_REDIRECT_URL_FAILURE=https://${DOMAIN_FRONT}
       - LOGOUT_REDIRECT_URL=https://${DOMAIN_FRONT}
       - OIDC_REDIRECT_ALLOWED_HOSTS=["https://${DOMAIN_FRONT}"]
+      # Stocke l'access token OIDC en session → le patch le forwarde à Mastra
+      # (X-User-Token) pour le cloisonnement RAG par groupe.
+      - OIDC_STORE_ACCESS_TOKEN=True
 
       # Pour envsubst (le command ci-dessous)
       - PROXY_API_KEY=${PROXY_API_KEY}

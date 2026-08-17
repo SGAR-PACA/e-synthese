@@ -1,6 +1,7 @@
 // mastra/src/lib/oidc.ts
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { buildAuthUrl, pkceChallenge, randomUrlToken } from './oidc-pkce.js';
+import { extractGroups } from './collection-scope.js';
 
 interface OidcConfig {
   issuerPublic: string;   // iss attendu (URL publique Keycloak)
@@ -50,7 +51,7 @@ export function beginLogin(returnUrl: string): { redirectUrl: string; tx: OidcTx
   return { redirectUrl, tx: { state, nonce, verifier, returnUrl } };
 }
 
-export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: string }> {
+export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: string; groups: string[] }> {
   const c = cfg();
   const res = await fetch(`${c.internalUrl}/protocol/openid-connect/token`, {
     method: 'POST',
@@ -76,5 +77,7 @@ export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: st
   });
   if (payload.nonce !== tx.nonce) throw new Error('nonce invalide');
   if (typeof payload.sub !== 'string') throw new Error('sub invalide');
-  return { sub: payload.sub };
+  // Groupes Keycloak (2b) : sert au contrôle d'appartenance à la collection dans
+  // le visualiseur de sources. Nécessite les groupes/rôles dans l'id_token.
+  return { sub: payload.sub, groups: extractGroups(payload) };
 }

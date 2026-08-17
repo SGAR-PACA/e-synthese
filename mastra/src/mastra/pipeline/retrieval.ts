@@ -1,5 +1,6 @@
 import * as albert from '../../lib/albert-client.js';
 import { getConfig } from '../../lib/config.js';
+import { getAllCollectionIds } from '../../lib/collections-cache.js';
 import type { RagChunk } from '../../lib/db.js';
 
 // Fusionne plusieurs paquets de chunks et déduplique par contenu.
@@ -41,15 +42,26 @@ export interface ResultatRecherche {
 // question d'origine, applique le seuil, garde les finalK meilleurs.
 // Choix A (validé) : AUCUN filtre minScore au search — le k borne déjà à
 // searchWideK résultats par requête ; le rerank est le seul filtre de qualité.
-export async function rechercherMultiple(requetes: string[], questionOrigine: string): Promise<ResultatRecherche> {
+// Périmètre de recherche (Chantier 2) :
+//  - `allowedCollections` = tableau → collections EXPLICITEMENT autorisées pour
+//    l'utilisateur (autorité ; tableau vide → aucun résultat, défaut sûr).
+//  - `null`/`undefined` = accès NON restreint (repli : mode transition explicite
+//    ou groupe admin) → TOUTES les collections. Plus de « collections par défaut »
+//    cochées en admin : l'accès est piloté par les groupes.
+export async function rechercherMultiple(
+  requetes: string[],
+  questionOrigine: string,
+  allowedCollections?: number[] | null,
+): Promise<ResultatRecherche> {
   const config = await getConfig();
-  if (!config.defaultCollections.length || requetes.length === 0) return { chunks: [], vide: true };
+  const collections = allowedCollections == null ? await getAllCollectionIds() : allowedCollections;
+  if (!collections.length || requetes.length === 0) return { chunks: [], vide: true };
 
   // A. Recherches parallèles (large). Une recherche qui échoue → paquet vide (dégradation douce).
   const paquets = await Promise.all(
     requetes.map(async (q) => {
       try {
-        const res = await albert.search({ query: q, collections: config.defaultCollections, k: config.searchWideK });
+        const res = await albert.search({ query: q, collections, k: config.searchWideK });
         return (res.data || []).map(normalizeHit);
       } catch (err) {
         console.error('[retrieval] recherche échouée pour', q, err);

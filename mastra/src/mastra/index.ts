@@ -1,7 +1,7 @@
 import { Mastra } from '@mastra/core';
 import { startDocumentWorker } from '../lib/document-worker.js';
 import { PostgresStore } from '@mastra/pg';
-import { collectionsRoute, documentsRoute, searchRoute, chatCompletionsRoute, modelsRoute, adminApiRoute, adminUiRoute, scoresRoute, sourcesAuthRoute, sourcesRoute, sourcesAssetsRoute, ratingsRoute } from '../routes';
+import { collectionsRoute, groupCollectionsRoute, documentsRoute, searchRoute, chatCompletionsRoute, modelsRoute, adminApiRoute, adminUiRoute, scoresRoute, sourcesAuthRoute, sourcesRoute, sourcesAssetsRoute, ratingsRoute } from '../routes';
 import { ragScorers } from './scorers/index.js';
 import { AlbertGateway } from './gateways/albert';
 import { ragAgent } from './agents/rag-agent';
@@ -36,6 +36,7 @@ export const mastra = new Mastra({
       ...chatCompletionsRoute,
       ...modelsRoute,
       ...collectionsRoute,
+      ...groupCollectionsRoute,
       ...documentsRoute,
       ...searchRoute,
       ...adminApiRoute,
