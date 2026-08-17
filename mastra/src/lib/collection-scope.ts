@@ -4,7 +4,8 @@ import type { JWTPayload } from 'jose';
 import { getCollectionsForGroups } from './db.js';
 
 // Groupe Keycloak conférant l'accès à TOUT le corpus (bypass). Configurable.
-const ADMIN_GROUP = process.env.MASTRA_ADMIN_GROUP || 'admin';
+// Comparaison insensible à la casse (évite le piège `Admin` vs `admin`).
+const ADMIN_GROUP = (process.env.MASTRA_ADMIN_GROUP || 'admin').toLowerCase();
 
 // Extrait les groupes d'un JWT Keycloak validé.
 // Sources : claim `groups` (chemins Keycloak type "/sgar" → "sgar") ET
@@ -24,7 +25,7 @@ export function extractGroups(payload: JWTPayload): string[] {
 }
 
 export function isAdminGroup(groups: string[]): boolean {
-  return groups.includes(ADMIN_GROUP);
+  return groups.some((g) => g.toLowerCase() === ADMIN_GROUP);
 }
 
 // Union dédupliquée de deux listes d'ids de collection. PURE.

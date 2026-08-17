@@ -6,27 +6,46 @@
   <title>E-Synthese Admin - Documents</title>
   <link rel="stylesheet" href="/admin/pico.min.css">
   <link rel="stylesheet" href="/admin/style.css">
+  <style>
+    .doc-toolbar { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin:.5rem 0; }
+    .doc-count { color:var(--pico-muted-color); font-size:.9rem; }
+    .queue-row { display:flex; align-items:center; gap:.6rem; padding:.35rem 0; border-bottom:1px solid var(--pico-muted-border-color); font-size:.9rem; }
+    .queue-row .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .badge { font-size:.8rem; padding:.1rem .5rem; border-radius:1rem; white-space:nowrap; }
+    .badge.wait { background:#eee; color:#555; }
+    .badge.run  { background:#e3f0ff; color:#0b5cad; }
+    .badge.ok   { background:#e4f7e8; color:#1a7f37; }
+    .badge.err  { background:#fde8e8; color:#b42318; }
+  </style>
 </head>
 <body>
   <nav id="main-nav"></nav>
   <h2>Documents</h2>
   <div id="msg" class="message"></div>
+
   <label for="collection-select">Collection</label>
   <select id="collection-select"><option value="">Sélectionnez une collection...</option></select>
-  <div id="documents-list" style="margin-top:1rem;"><p>Sélectionnez une collection pour voir ses documents.</p></div>
+  <div class="doc-toolbar">
+    <span id="doc-count" class="doc-count"></span>
+    <button id="refresh-btn" class="outline" style="margin:0;padding:.2rem .6rem;">Rafraîchir</button>
+  </div>
+  <div id="documents-list"><p>Sélectionnez une collection pour voir ses documents.</p></div>
+
   <hr>
-  <details>
-    <summary>Uploader un document</summary>
-    <form id="upload-form" style="margin-top:1rem;">
-      <label for="upload-collection">Collection cible</label>
-      <select id="upload-collection"></select>
-      <label for="upload-file">Fichier</label>
-      <input type="file" id="upload-file" required>
-      <button type="submit">Uploader</button>
-    </form>
-  </details>
+  <article>
+    <header>Uploader des documents</header>
+    <label for="upload-collection">Collection cible</label>
+    <select id="upload-collection"></select>
+    <label for="upload-file">Fichiers (PDF, plusieurs possibles, max 10 Mo chacun)</label>
+    <input type="file" id="upload-file" accept="application/pdf" multiple>
+    <button id="upload-btn">Uploader</button>
+    <div id="upload-queue" style="margin-top:.8rem;"></div>
+  </article>
+
   <script src="/admin/app.js"></script>
   <script>
+    var MAX_BYTES = 10 * 1024 * 1024;
+
     async function loadCollectionSelects() {
       await checkAuth();
       buildNav('documents');
@@ -36,7 +55,7 @@
       var uploadSelect = document.getElementById('upload-collection');
       while (mainSelect.children.length > 1) mainSelect.removeChild(mainSelect.lastChild);
       clearEl(uploadSelect);
-      items.forEach(function(c) {
+      items.forEach(function (c) {
         var label = c.name + ' (ID: ' + c.id + ')';
         mainSelect.appendChild(createEl('option', { value: String(c.id), textContent: label }));
         uploadSelect.appendChild(createEl('option', { value: String(c.id), textContent: label }));
@@ -45,20 +64,35 @@
 
     async function loadDocuments(collectionId) {
       var container = document.getElementById('documents-list');
+      var countEl = document.getElementById('doc-count');
       clearEl(container);
+      countEl.textContent = '';
       if (!collectionId) {
         container.appendChild(createEl('p', { textContent: 'Sélectionnez une collection pour voir ses documents.' }));
         return;
       }
       container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Chargement...' }));
-      var docs = await apiGet('/v1/documents?collection_id=' + collectionId);
+      var docs;
+      try {
+        docs = await apiGet('/v1/documents?collection_id=' + collectionId);
+      } catch (e) {
+        docs = null;
+      }
       clearEl(container);
-      var items = (docs && docs.data) || [];
+      // La liste est renvoyée entière (pagination serveur). Une erreur ici = échec
+      // réel (ex : quota Albert saturé) → on le signale au lieu d'afficher une liste
+      // potentiellement incomplète.
+      if (!docs || !Array.isArray(docs.data)) {
+        countEl.textContent = '';
+        container.appendChild(createEl('p', { className: 'badge err', textContent: 'Erreur de chargement (réessaie dans un instant).' }));
+        return;
+      }
+      var items = docs.data;
+      countEl.textContent = items.length + ' document(s)';
       if (!items.length) {
         container.appendChild(createEl('p', { textContent: 'Aucun document dans cette collection.' }));
         return;
       }
-      var table = createEl('table', { role: 'grid' });
       var thead = createEl('thead', {}, [
         createEl('tr', {}, [
           createEl('th', { textContent: 'Nom' }),
@@ -67,55 +101,104 @@
         ]),
       ]);
       var tbody = createEl('tbody');
-      items.forEach(function(d) {
+      items.forEach(function (d) {
         tbody.appendChild(createEl('tr', {}, [
           createEl('td', { textContent: d.name || String(d.id) }),
-          createEl('td', { textContent: String(d.id) }),
+          createEl('td', {}, [createEl('small', { textContent: String(d.id) })]),
           createEl('td', {}, [
-            createEl('button', { className: 'outline secondary', textContent: 'Supprimer', onClick: function() { deleteDocument(d.id); } }),
+            createEl('button', {
+              className: 'outline secondary',
+              style: 'margin:0;padding:.2rem .6rem;',
+              textContent: 'Supprimer',
+              onClick: function () { deleteDocument(d.id); },
+            }),
           ]),
         ]));
       });
+      var table = createEl('table', { role: 'grid' });
       table.appendChild(thead);
       table.appendChild(tbody);
       container.appendChild(table);
     }
 
-    document.getElementById('collection-select').addEventListener('change', function(e) {
-      loadDocuments(e.target.value);
-    });
+    // ---- Upload multiple (file d'attente séquentielle) ----
+    function setBadge(row, cls, text) {
+      var b = row.querySelector('.badge');
+      b.className = 'badge ' + cls;
+      b.textContent = text;
+    }
 
-    document.getElementById('upload-form').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      var file = document.getElementById('upload-file').files[0];
-      var collectionId = document.getElementById('upload-collection').value;
-      if (!file || !collectionId) return;
+    async function uploadOne(file, collectionId) {
       var formData = new FormData();
       formData.append('file', file);
       formData.append('collection_id', collectionId);
       var headers = {};
       if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
       var res = await fetch('/v1/documents', { method: 'POST', headers: headers, body: formData });
-      if (res.status === 401) { location.href = '/admin/login'; return; }
-      var result = await res.json();
-      // L'upload est asynchrone : le back renvoie 202 { fileId, status:'processing' }.
-      // On considère succès si la requête est OK (2xx) et qu'un id de suivi est présent
-      // (fileId = nouveau format ; id/data = ancien format synchrone, rétro-compat).
-      if (res.ok && result && (result.fileId || result.id || result.data)) {
-        showMessage('msg', 'Document envoye — indexation en cours (quelques secondes)…', false);
+      if (res.status === 401) { location.href = '/admin/login'; throw new Error('unauthorized'); }
+      var result = null;
+      try { result = await res.json(); } catch (e) { /* ignore */ }
+      if (res.ok && result && (result.fileId || result.id || result.data)) return { ok: true };
+      return { ok: false, error: (result && (result.error || result.detail)) || ('HTTP ' + res.status) };
+    }
+
+    document.getElementById('upload-btn').addEventListener('click', async function () {
+      var input = document.getElementById('upload-file');
+      var collectionId = document.getElementById('upload-collection').value;
+      var files = Array.from(input.files || []);
+      if (!collectionId) { showMessage('msg', 'Choisis une collection cible.', true); return; }
+      if (!files.length) { showMessage('msg', 'Choisis au moins un fichier.', true); return; }
+
+      var queue = document.getElementById('upload-queue');
+      clearEl(queue);
+      var rows = files.map(function (f) {
+        var tooBig = f.size > MAX_BYTES;
+        var row = createEl('div', { className: 'queue-row' }, [
+          createEl('span', { className: 'name', textContent: f.name }),
+          createEl('span', { className: 'badge ' + (tooBig ? 'err' : 'wait'), textContent: tooBig ? 'trop volumineux (>10 Mo)' : 'en attente' }),
+        ]);
+        queue.appendChild(row);
+        return { file: f, row: row, skip: tooBig };
+      });
+
+      document.getElementById('upload-btn').setAttribute('aria-busy', 'true');
+      var ok = 0, ko = 0;
+      for (var i = 0; i < rows.length; i++) {
+        var item = rows[i];
+        if (item.skip) { ko++; continue; }
+        setBadge(item.row, 'run', 'envoi…');
+        try {
+          var r = await uploadOne(item.file, collectionId);
+          if (r.ok) { setBadge(item.row, 'ok', 'envoyé ✓'); ok++; }
+          else { setBadge(item.row, 'err', r.error); ko++; }
+        } catch (e) {
+          if (e.message === 'unauthorized') return;
+          setBadge(item.row, 'err', 'erreur réseau'); ko++;
+        }
+      }
+      document.getElementById('upload-btn').removeAttribute('aria-busy');
+      input.value = '';
+      showMessage('msg', ok + ' envoyé(s), ' + ko + ' échec(s). Indexation en cours (quelques secondes par document).', ko > 0);
+
+      // Rafraîchir la liste si on regarde la collection cible.
+      if (document.getElementById('collection-select').value === collectionId) {
         loadDocuments(collectionId);
-      } else {
-        showMessage('msg', (result && result.detail) || 'Erreur lors de l\'upload', true);
       }
     });
 
     async function deleteDocument(id) {
       if (!confirm('Supprimer ce document ? Cette action est irréversible.')) return;
       await apiDelete('/v1/documents/' + id);
-      var collectionId = document.getElementById('collection-select').value;
-      loadDocuments(collectionId);
+      loadDocuments(document.getElementById('collection-select').value);
       showMessage('msg', 'Document supprimé.', false);
     }
+
+    document.getElementById('collection-select').addEventListener('change', function (e) {
+      loadDocuments(e.target.value);
+    });
+    document.getElementById('refresh-btn').addEventListener('click', function () {
+      loadDocuments(document.getElementById('collection-select').value);
+    });
 
     loadCollectionSelects();
   </script>

@@ -19,16 +19,36 @@ async function albertFetch(path: string, options: RequestInit = {}): Promise<Res
   });
 }
 
+// Fetch avec ré-essai sur 429/503 (quota Albert 10 req/min). Respecte `Retry-After`
+// s'il est fourni, sinon backoff exponentiel plafonné. Utilisé pour la pagination
+// (liste tronquée en silence sinon) ET l'upload (worker qui marque `failed` sinon).
+async function albertFetchWithRetry(path: string, options: RequestInit = {}, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await albertFetch(path, options);
+    if ((res.status !== 429 && res.status !== 503) || attempt >= maxRetries) return res;
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 30_000)
+        : Math.min(500 * 2 ** attempt, 8_000);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+}
+
 // Récupère TOUTES les pages d'un endpoint de liste Albert (pagination limit/offset,
 // `data[]` par page). Sans ça, Albert ne renvoie que les 10 premiers éléments (défaut).
+// LÈVE une erreur si une page échoue durablement (après ré-essais) plutôt que de
+// renvoyer une liste tronquée en silence.
 async function collectPaginated(basePath: string): Promise<any[]> {
   const out: any[] = [];
   const limit = 100;
   let offset = 0;
   const sep = basePath.includes('?') ? '&' : '?';
   for (let guard = 0; guard < 1000; guard++) {
-    const res = await albertFetch(`${basePath}${sep}limit=${limit}&offset=${offset}`);
-    if (!res.ok) break;
+    const res = await albertFetchWithRetry(`${basePath}${sep}limit=${limit}&offset=${offset}`);
+    if (!res.ok) {
+      throw new Error(`Albert pagination ${basePath} → HTTP ${res.status}`);
+    }
     const json: any = await res.json();
     const rows: any[] = json.data || [];
     out.push(...rows);
@@ -68,7 +88,9 @@ export async function listDocuments(collectionId: string) {
 }
 
 export async function uploadDocument(formData: FormData) {
-  const res = await albertFetch('/v1/documents', {
+  // Ré-essai sur 429/503 : le worker marquait `failed` au moindre quota saturé
+  // (upload en masse). Le POST est ré-essayable (un 429 = rejeté, pas traité).
+  const res = await albertFetchWithRetry('/v1/documents', {
     method: 'POST',
     body: formData,
   });
