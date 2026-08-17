@@ -431,10 +431,12 @@ services:
       - "traefik.http.routers.auth.priority=100"
       - "traefik.http.services.auth.loadbalancer.server.port=8080"
 
-  # Provisionne le client public `mastra-rating-spa` (notation) dans Keycloak à
-  # chaque déploiement, de façon idempotente (ne fait rien s'il existe déjà).
+  # Provisionne Keycloak à chaque déploiement, de façon idempotente. Deux rôles :
+  #  1. force `registrationAllowed=false` sur le realm (ferme l'auto-inscription) ;
+  #  2. crée le client public `mastra-rating-spa` (notation) s'il est absent.
   # Nécessaire car l'import du realm (realm.prod.json.tpl) ne rejoue qu'au tout
-  # premier boot : ce service couvre aussi les instances déjà initialisées.
+  # premier boot : ce service couvre aussi les instances déjà initialisées, et
+  # re-ferme l'inscription même si elle a été réactivée à la main dans la console.
   keycloak-provision-rating:
     image: quay.io/keycloak/keycloak:26.3
     restart: "no"
@@ -460,6 +462,10 @@ services:
           n=$$((n+1)); [ "$$n" -ge 20 ] && { echo "Keycloak injoignable."; exit 1; }
           echo "Keycloak pas encore prêt (tentative $$n)…"; sleep 3
         done
+        # Sécurité : ferme l'auto-inscription du realm (idempotent, ré-appliqué à
+        # chaque déploiement). Corrige aussi une éventuelle réactivation en console.
+        "$$KCADM" update realms/$$REALM --config "$$CFG" -s registrationAllowed=false
+        echo "Auto-inscription desactivee (registrationAllowed=false)."
         # Crée le client public s'il est absent.
         ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' || true)
         if [ -z "$$ID" ]; then
