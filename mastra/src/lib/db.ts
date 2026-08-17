@@ -693,6 +693,21 @@ export async function getDocumentFileByAlbertId(
   return rows[0];
 }
 
+// Résout un document par son NOM de fichier. Nécessaire car Albert expose DEUX
+// espaces d'ID : celui de la recherche (chunk.document_id) diffère de celui de
+// l'upload (stocké dans albert_document_id). Le nom (document_name des chunks =
+// filename stocké) fait le pont. Homonymes -> le plus récent PRÊT.
+export async function getDocumentFileByFilename(
+  filename: string,
+): Promise<DocumentFile | undefined> {
+  const rows = await query<DocumentFile>(
+    `SELECT * FROM document_files WHERE filename = $1 AND status = 'ready'
+     ORDER BY created_at DESC LIMIT 1`,
+    [filename],
+  );
+  return rows[0];
+}
+
 // Supprime la ligne et retourne l'ancienne valeur (pour effacer la clé S3 associée).
 export async function deleteDocumentFileByAlbertId(
   albertDocumentId: string,
