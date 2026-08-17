@@ -17,8 +17,10 @@ test('extractGroups tolère l\'absence de claims (payload vide)', () => {
   assert.deepEqual(extractGroups({ groups: 'pasuntableau', realm_access: {} } as any), []);
 });
 
-test('isAdminGroup détecte le groupe admin par défaut', () => {
+test('isAdminGroup détecte le groupe admin (insensible à la casse)', () => {
   assert.equal(isAdminGroup(['admin', 'sgar']), true);
+  assert.equal(isAdminGroup(['Admin']), true);
+  assert.equal(isAdminGroup(['ADMIN']), true);
   assert.equal(isAdminGroup(['sgar', 'pref13']), false);
 });
 
