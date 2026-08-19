@@ -1,0 +1,111 @@
+- generic [active] [ref=f9e1]:
+  - navigation [ref=f9e2]:
+    - generic [ref=f9e3]: E E-SynthÃ¨se
+    - link "Tableau de bord" [ref=f9e4] [cursor=pointer]:
+      - /url: "#a"
+    - link "Configuration" [ref=f9e7] [cursor=pointer]:
+      - /url: "#a"
+    - link "Collections" [ref=f9e11] [cursor=pointer]:
+      - /url: "#a"
+    - link "Documents" [ref=f9e14] [cursor=pointer]:
+      - /url: "#a"
+    - link "Notation" [ref=f9e18] [cursor=pointer]:
+      - /url: "#a"
+    - link "Utilisateurs" [ref=f9e21] [cursor=pointer]:
+      - /url: "#a"
+    - link "DÃ©connexion" [ref=f9e25] [cursor=pointer]:
+      - /url: "#a"
+  - generic [ref=f9e28]:
+    - heading "Configuration" [level=2] [ref=f9e29]
+    - paragraph [ref=f9e30]: RÃ©glez la gÃ©nÃ©ration et la notation IA-juge. Les changements prennent effet immÃ©diatement.
+    - generic [ref=f9e31]: Configuration enregistrÃ©e.
+    - generic [ref=f9e32]:
+      - generic [ref=f9e33]:
+        - group "ModÃ¨le LLM" [ref=f9e34]:
+          - generic [ref=f9e36]: ModÃ¨le de gÃ©nÃ©ration
+          - combobox "ModÃ¨le de gÃ©nÃ©ration" [ref=f9e37] [cursor=pointer]:
+            - option "openweight-large â€” gpt-oss 120B" [selected]
+            - option "openweight-medium â€” Mistral Small 24B"
+            - option "deepseek-v4-flash"
+          - generic [ref=f9e38]: ModÃ¨le juge (notation)
+          - combobox "ModÃ¨le juge (notation)" [ref=f9e39] [cursor=pointer]:
+            - option "openweight-medium â€” Mistral Small 24B" [selected]
+            - option "openweight-large â€” gpt-oss 120B"
+          - generic [ref=f9e40]: Doit diffÃ©rer du modÃ¨le de gÃ©nÃ©ration pour Ã©viter le biais d'auto-prÃ©fÃ©rence.
+        - group "ParamÃ¨tres RAG" [ref=f9e41]:
+          - generic [ref=f9e43]:
+            - generic [ref=f9e44]:
+              - generic [ref=f9e45]: RÃ©sultats (K)
+              - spinbutton "RÃ©sultats (K)" [ref=f9e46]: "5"
+            - generic [ref=f9e47]:
+              - generic [ref=f9e48]: Score minimum
+              - spinbutton "Score minimum" [ref=f9e49]: "0.5"
+          - generic [ref=f9e50]:
+            - generic [ref=f9e51] [cursor=pointer]:
+              - switch "Activer le reranking" [checked] [ref=f9e52]
+              - text: Activer le reranking
+            - generic [ref=f9e53] [cursor=pointer]:
+              - checkbox "Cloisonner le corpus par groupe Keycloak" [checked] [ref=f9e54]
+              - text: Cloisonner le corpus par groupe Keycloak
+            - generic [ref=f9e55] [cursor=pointer]:
+              - checkbox "Journalisation dÃ©taillÃ©e de l'Ã©valuation" [ref=f9e56]
+              - text: Journalisation dÃ©taillÃ©e de l'Ã©valuation
+        - generic [ref=f9e57]: Prompt systÃ¨me RAG
+        - textbox "Prompt systÃ¨me RAG" [ref=f9e58]: Tu es un assistant IA de l'administration franÃ§aise (projet E-SynthÃ¨se, SGAR PACA). RÃ©ponds en franÃ§ais Ã partir du contexte fourni.
+        - button "Enregistrer" [ref=f9e59] [cursor=pointer]
+      - article [ref=f9e60]:
+        - generic [ref=f9e61]: Banc de test â€” derniÃ¨re exÃ©cution
+        - generic [ref=f9e62]:
+          - generic [ref=f9e63]: Albert connectÃ©
+          - generic [ref=f9e64]: "juge : openweight-medium"
+        - generic [ref=f9e65]:
+          - heading "RÃ©ponse gÃ©nÃ©rÃ©e notÃ©e" [level=4] [ref=f9e66]:
+            - text: RÃ©ponse gÃ©nÃ©rÃ©e
+            - generic [ref=f9e67]: notÃ©e
+          - generic [ref=f9e68]: "Pour renouveler une carte nationale d'identitÃ©, prÃ©sentez : â€” une photo d'identitÃ© rÃ©cente aux normes ; â€” un justificatif de domicile de moins d'un an ; â€” l'ancienne carte. Sources : cni-renouvellement.pdf"
+        - group [ref=f9e69]:
+          - generic "Passages utilisÃ©s (3) et vivier Ã©largi" [ref=f9e70] [cursor=pointer]
+        - generic [ref=f9e71]:
+          - button "Relancer" [ref=f9e72] [cursor=pointer]
+          - button "TÃ©lÃ©charger le log JSON" [ref=f9e73] [cursor=pointer]
+          - button "dÃ©tail" [ref=f9e74] [cursor=pointer]
+    - generic [ref=f9e75]:
+      - generic [ref=f9e76]:
+        - generic [ref=f9e77]: "0.87"
+        - generic [ref=f9e78]: FidÃ©litÃ©
+        - generic [ref=f9e79]: n = 142
+      - generic [ref=f9e80]:
+        - generic [ref=f9e81]: "0.79"
+        - generic [ref=f9e82]: ComplÃ©tude
+        - generic [ref=f9e83]: n = 142
+      - generic [ref=f9e84]:
+        - generic [ref=f9e85]: "0.93"
+        - generic [ref=f9e86]: ConformitÃ©
+        - generic [ref=f9e87]: n = 142
+      - generic [ref=f9e88]:
+        - generic [ref=f9e89]: "0.71"
+        - generic [ref=f9e90]: QualitÃ© retrieval
+        - generic [ref=f9e91]: n = 118
+    - table [ref=f9e93]:
+      - rowgroup [ref=f9e94]:
+        - row [ref=f9e95]:
+          - columnheader "Date" [ref=f9e96]
+          - columnheader "Question" [ref=f9e97]
+          - columnheader "MÃ©trique" [ref=f9e98]
+          - columnheader "Score" [ref=f9e99]
+      - rowgroup [ref=f9e100]:
+        - row [ref=f9e101]:
+          - cell "19/08/2026" [ref=f9e102]
+          - cell "Renouvellement d'une carte d'identitÃ©" [ref=f9e103]
+          - cell "faithfulness" [ref=f9e104]
+          - cell "0.92" [ref=f9e105]
+        - row [ref=f9e106]:
+          - cell "19/08/2026" [ref=f9e107]
+          - cell "DÃ©lais d'instruction d'un permis" [ref=f9e108]
+          - cell "completeness" [ref=f9e109]
+          - cell "0.58" [ref=f9e110]
+        - row [ref=f9e111]:
+          - cell "18/08/2026" [ref=f9e112]
+          - cell "Conditions d'aide au logement" [ref=f9e113]
+          - cell "retrieval_quality" [ref=f9e114]
+          - cell "0.21" [ref=f9e115]

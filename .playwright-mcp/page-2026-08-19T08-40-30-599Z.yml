@@ -1,0 +1,129 @@
+- generic [active] [ref=f8e1]:
+  - navigation [ref=f8e2]:
+    - generic [ref=f8e3]: E E-Synthèse
+    - link "Tableau de bord" [ref=f8e4] [cursor=pointer]:
+      - /url: /admin/
+    - link "Configuration" [ref=f8e7] [cursor=pointer]:
+      - /url: /admin/settings
+    - link "Collections" [ref=f8e11] [cursor=pointer]:
+      - /url: /admin/collections
+    - link "Documents" [ref=f8e14] [cursor=pointer]:
+      - /url: /admin/documents
+    - link "Notation" [ref=f8e17] [cursor=pointer]:
+      - /url: /admin/eval
+    - link "Déconnexion" [ref=f8e20] [cursor=pointer]:
+      - /url: "#"
+  - heading "Banc de composants" [level=2] [ref=f8e23]
+  - paragraph [ref=f8e24]: Aperçu du système DSFR × liquid glass — épure Linear/Vercel, thème clair.
+  - generic [ref=f8e25]: Configuration sauvegardée. Changements actifs immédiatement.
+  - generic [ref=f8e26]: evalSamplingRate doit être un nombre entre 0 et 1.
+  - generic [ref=f8e27]:
+    - generic [ref=f8e28]:
+      - group "Modèle LLM" [ref=f8e29]:
+        - generic [ref=f8e31]: Modèle de génération
+        - combobox "Modèle de génération" [ref=f8e32] [cursor=pointer]:
+          - option "openweight-large" [selected]
+          - option "openweight-medium"
+          - option "deepseek-v4-flash"
+        - generic [ref=f8e33]: Question de test
+        - textbox "Question de test" [ref=f8e34]:
+          - /placeholder: "Ex : Quels documents pour renouveler une carte d'identité ?"
+      - group "Paramètres" [ref=f8e35]:
+        - generic [ref=f8e37]:
+          - generic [ref=f8e38]:
+            - generic [ref=f8e39]: Nombre de résultats (K)
+            - spinbutton "Nombre de résultats (K)" [ref=f8e40]: "5"
+          - generic [ref=f8e41]:
+            - generic [ref=f8e42]: Score minimum
+            - spinbutton "Score minimum" [ref=f8e43]: "0.5"
+        - generic [ref=f8e44] [cursor=pointer]:
+          - switch "Activer le reranking" [checked] [ref=f8e45]
+          - text: Activer le reranking
+        - generic [ref=f8e46] [cursor=pointer]:
+          - checkbox "Corpus par groupe Keycloak" [checked] [ref=f8e47]
+          - text: Corpus par groupe Keycloak
+        - generic [ref=f8e48] [cursor=pointer]:
+          - checkbox "Journalisation détaillée" [ref=f8e49]
+          - text: Journalisation détaillée
+      - generic [ref=f8e50]: Prompt système RAG
+      - textbox "Prompt système RAG" [ref=f8e51]: Tu es un assistant IA de l'administration française…
+      - button "Sauvegarder" [ref=f8e52] [cursor=pointer]
+    - article [ref=f8e53]:
+      - generic [ref=f8e54]: Boutons & badges
+      - paragraph [ref=f8e55]:
+        - button "Action principale" [ref=f8e56] [cursor=pointer]
+        - button "Secondaire" [ref=f8e57] [cursor=pointer]
+        - button "Contraste" [ref=f8e58] [cursor=pointer]
+        - button "Supprimer" [ref=f8e59] [cursor=pointer]
+        - button "détail" [ref=f8e60] [cursor=pointer]
+        - button "Désactivé" [disabled] [ref=f8e61]
+      - paragraph [ref=f8e62]:
+        - generic [ref=f8e63]: connecté
+        - generic [ref=f8e64]: inconnu
+        - generic [ref=f8e65]: erreur
+        - generic [ref=f8e66]: "0.92"
+        - generic [ref=f8e67]: "0.61"
+        - generic [ref=f8e68]: "0.24"
+        - generic [ref=f8e69]: n/a
+      - generic [ref=f8e70]:
+        - heading "Réponse LLM ok" [level=4] [ref=f8e71]:
+          - text: Réponse LLM
+          - generic [ref=f8e72]: ok
+        - generic [ref=f8e73]: "Pour renouveler une carte d'identité, vous devez fournir : - une photo d'identité récente - un justificatif de domicile Sources : doc-cni.pdf"
+      - group [ref=f8e74]:
+        - generic "Vivier élargi — candidats (3)" [ref=f8e75] [cursor=pointer]
+  - generic [ref=f8e76]:
+    - generic [ref=f8e77]:
+      - generic [ref=f8e78]: "0.87"
+      - generic [ref=f8e79]: Fidélité
+      - generic [ref=f8e80]: n = 142
+    - generic [ref=f8e81]:
+      - generic [ref=f8e82]: "0.79"
+      - generic [ref=f8e83]: Complétude
+      - generic [ref=f8e84]: n = 142
+    - generic [ref=f8e85]:
+      - generic [ref=f8e86]: "0.93"
+      - generic [ref=f8e87]: Conformité
+      - generic [ref=f8e88]: n = 142
+    - generic [ref=f8e89]:
+      - generic [ref=f8e90]: "0.71"
+      - generic [ref=f8e91]: Retrieval
+      - generic [ref=f8e92]: n = 118
+  - generic [ref=f8e93]:
+    - generic [ref=f8e94]:
+      - generic [ref=f8e95]: Métrique
+      - combobox [ref=f8e96] [cursor=pointer]:
+        - option "Toutes" [selected]
+        - option "faithfulness"
+    - generic [ref=f8e97]:
+      - generic [ref=f8e98]: Score min
+      - spinbutton [ref=f8e99]: "0"
+    - generic [ref=f8e100]:
+      - generic [ref=f8e101]: Source
+      - combobox [ref=f8e102] [cursor=pointer]:
+        - option "live" [selected]
+        - option "test"
+    - button "Filtrer" [ref=f8e103] [cursor=pointer]
+  - table [ref=f8e105]:
+    - rowgroup [ref=f8e106]:
+      - row [ref=f8e107]:
+        - columnheader "Date" [ref=f8e108]
+        - columnheader "Question" [ref=f8e109]
+        - columnheader "Métrique" [ref=f8e110]
+        - columnheader "Score" [ref=f8e111]
+    - rowgroup [ref=f8e112]:
+      - row [ref=f8e113]:
+        - cell "2026-08-19" [ref=f8e114]
+        - cell "Renouvellement CNI" [ref=f8e115]
+        - cell "faithfulness" [ref=f8e116]
+        - cell "0.92" [ref=f8e117]
+      - row [ref=f8e118]:
+        - cell "2026-08-19" [ref=f8e119]
+        - cell "Délais permis" [ref=f8e120]
+        - cell "completeness" [ref=f8e121]
+        - cell "0.58" [ref=f8e122]
+      - row [ref=f8e123]:
+        - cell "2026-08-18" [ref=f8e124]
+        - cell "Aide au logement" [ref=f8e125]
+        - cell "retrieval_quality" [ref=f8e126]
+        - cell "0.21" [ref=f8e127]

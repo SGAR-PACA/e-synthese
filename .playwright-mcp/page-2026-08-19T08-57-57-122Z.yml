@@ -1,0 +1,13 @@
+- generic [ref=f1e2]:
+  - heading "Connexion Admin" [level=2] [ref=f1e3]
+  - paragraph [ref=f1e4]: Entrez vos identifiants pour acceder au panel.
+  - generic [ref=f1e5]:
+    - text: Email
+    - textbox "Email" [ref=f1e6]:
+      - /placeholder: admin@example.com
+    - text: Mot de passe
+    - textbox "Mot de passe" [ref=f1e7]
+    - button "Se connecter" [ref=f1e8]
+  - paragraph [ref=f1e9]:
+    - link "Mot de passe oublié ?" [ref=f1e10] [cursor=pointer]:
+      - /url: /admin/forgot-password
