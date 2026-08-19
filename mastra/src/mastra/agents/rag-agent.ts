@@ -68,7 +68,7 @@ export const ragAgent = new Agent({
   name: 'E-Synthèse RAG Agent',
   instructions: resolveInstructions,
   model: async () => {
-    const model = (await getConfig()).llmModel || 'albert-large';
+    const model = (await getConfig()).llmModel || 'openweight-large';
     return `albert/albert/${model}` as any;
   },
   tools: { searchTool, rerankTool },

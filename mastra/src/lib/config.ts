@@ -11,6 +11,7 @@ export interface AppConfig {
   useRerank: boolean;
   ragPromptTemplate: string;
   adminContactEmail: string;
+  judgeModel: string;      // modèle LLM-juge de la notation (distinct du modèle de génération)
   evalSamplingRate: number;
   evalWideK: number;
   searchWideK: number;     // k par recherche (pêche large) — pipeline RAG
@@ -22,14 +23,19 @@ export interface AppConfig {
 const DEFAULTS: AppConfig = {
   albertApiKey: '',
   albertApiBaseUrl: 'https://albert.api.etalab.gouv.fr',
-  llmModel: 'albert-large',
+  llmModel: 'openweight-large',
   defaultCollections: [],
   searchK: 5,
   minScore: 0.5,
   useRerank: true,
   ragPromptTemplate: `Tu es un assistant IA de l'administration française (projet E-Synthèse, SGAR PACA).\nUtilise le contexte ci-dessous pour répondre. Si le contexte ne contient pas l'information, dis-le clairement.\nCite tes sources quand c'est possible. Réponds toujours en français.\n\nCONTEXTE :\n{context}`,
   adminContactEmail: '',
-  evalSamplingRate: 1.0,
+  // Juge par défaut : Mistral Small 3.2 24B (openweight-medium). DISTINCT du modèle de
+  // génération (gpt-oss-120b / openweight-large) pour éviter le biais d'auto-préférence.
+  judgeModel: 'openweight-medium',
+  // Éval échantillonnée : 0.3 par défaut. La clé Albert (~10 req/min) est PARTAGÉE par tous
+  // les users ; à 1.0 l'éval sature le quota. Réglable dans l'admin sans redéploiement.
+  evalSamplingRate: 0.3,
   evalWideK: 20,
   searchWideK: 20,
   finalK: 8,
@@ -76,6 +82,7 @@ export async function getConfig(): Promise<AppConfig> {
   config.useRerank = ((await getConfigValue('useRerank')) ?? process.env.USE_RERANK ?? String(DEFAULTS.useRerank)) === 'true';
   config.ragPromptTemplate = (await getConfigValue('ragPromptTemplate')) || DEFAULTS.ragPromptTemplate;
   config.adminContactEmail = (await getConfigValue('adminContactEmail')) || '';
+  config.judgeModel = (await getConfigValue('judgeModel')) || process.env.ALBERT_JUDGE_MODEL || DEFAULTS.judgeModel;
 
   const rate = parseFloat((await getConfigValue('evalSamplingRate')) || process.env.EVAL_SAMPLING_RATE || String(DEFAULTS.evalSamplingRate));
   config.evalSamplingRate = Number.isFinite(rate) && rate >= 0 && rate <= 1 ? rate : DEFAULTS.evalSamplingRate;

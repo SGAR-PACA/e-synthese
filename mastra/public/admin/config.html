@@ -31,13 +31,57 @@
         <div>
           <label for="searchK">Nombre de resultats (K)</label>
           <input type="number" id="searchK" min="1" max="50" value="5">
+          <small>Passages demandés par requête de recherche.</small>
         </div>
         <div>
           <label for="minScore">Score minimum</label>
           <input type="number" id="minScore" min="0" max="1" step="0.05" value="0.5">
+          <small>Seuil de pertinence sous lequel un passage est ignoré.</small>
+        </div>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="searchWideK">Pêche large (searchWideK)</label>
+          <input type="number" id="searchWideK" min="1" max="100" value="20">
+          <small>Nombre de candidats ramenés AVANT rerank (vivier du pipeline).</small>
+        </div>
+        <div>
+          <label for="finalK">Passages gardés (finalK)</label>
+          <input type="number" id="finalK" min="1" max="50" value="8">
+          <small>Passages conservés APRÈS rerank pour rédiger.</small>
+        </div>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="rerankMinScore">Seuil rerank (anti-hallucination)</label>
+          <input type="number" id="rerankMinScore" min="0" max="1" step="0.05" value="0.2">
+          <small>Si le meilleur passage reranké est sous ce seuil → refus (rien trouvé).</small>
+        </div>
+        <div>
+          <label for="temperature">Température (génération)</label>
+          <input type="number" id="temperature" min="0" max="2" step="0.05" value="0.2">
+          <small>Bas = factuel/déterministe (recommandé), haut = créatif.</small>
         </div>
       </div>
       <label><input type="checkbox" id="useRerank" role="switch"> Activer le reranking</label>
+    </fieldset>
+    <fieldset>
+      <legend>Notation (IA-juge)</legend>
+      <label for="judgeModel">Modèle juge</label>
+      <select id="judgeModel"><option value="">Chargement...</option></select>
+      <small>Doit être <strong>différent</strong> du modèle de génération (sinon biais d'auto-préférence). Défaut recommandé : <code>openweight-medium</code> (Mistral Small 24B).</small>
+      <div class="grid">
+        <div>
+          <label for="evalSamplingRate">Taux d'échantillonnage de l'éval</label>
+          <input type="number" id="evalSamplingRate" min="0" max="1" step="0.05" value="0.3">
+          <small>Part des réponses notées (0 = désactivé, 1 = 100 %). Clé Albert (~10 req/min) <strong>partagée</strong> : garder bas.</small>
+        </div>
+        <div>
+          <label for="evalWideK">Vivier élargi éval (evalWideK)</label>
+          <input type="number" id="evalWideK" min="1" max="100" value="20">
+          <small>Taille du vivier pour le critère « qualité du retrieval » du juge.</small>
+        </div>
+      </div>
     </fieldset>
     <fieldset>
       <legend>Prompt système RAG</legend>
@@ -63,21 +107,35 @@
       document.getElementById('albertApiBaseUrl').value = config.albertApiBaseUrl || '';
       document.getElementById('searchK').value = config.searchK;
       document.getElementById('minScore').value = config.minScore;
+      document.getElementById('searchWideK').value = config.searchWideK;
+      document.getElementById('finalK').value = config.finalK;
+      document.getElementById('rerankMinScore').value = config.rerankMinScore;
+      document.getElementById('temperature').value = config.temperature;
       document.getElementById('useRerank').checked = config.useRerank;
       document.getElementById('ragPromptTemplate').value = config.ragPromptTemplate || '';
       document.getElementById('adminContactEmail').value = config.adminContactEmail || '';
+      document.getElementById('evalSamplingRate').value = config.evalSamplingRate;
+      document.getElementById('evalWideK').value = config.evalWideK;
       var status = await apiGet('/admin/status');
-      var select = document.getElementById('llmModel');
-      clearEl(select);
-      if (status && status.albertModels && status.albertModels.length) {
-        status.albertModels.forEach(function(m) {
-          var opt = createEl('option', { value: m, textContent: m });
-          if (m === config.llmModel) opt.selected = true;
-          select.appendChild(opt);
-        });
-      } else {
-        select.appendChild(createEl('option', { value: config.llmModel, textContent: config.llmModel }));
+      var models = (status && status.albertModels && status.albertModels.length) ? status.albertModels : null;
+      // Peuple un <select> de modèles depuis le catalogue Albert, en gardant la valeur courante.
+      function fillModelSelect(id, current) {
+        var select = document.getElementById(id);
+        clearEl(select);
+        if (models) {
+          var present = models.indexOf(current) !== -1;
+          if (!present && current) select.appendChild(createEl('option', { value: current, textContent: current, selected: true }));
+          models.forEach(function(m) {
+            var opt = createEl('option', { value: m, textContent: m });
+            if (m === current) opt.selected = true;
+            select.appendChild(opt);
+          });
+        } else {
+          select.appendChild(createEl('option', { value: current, textContent: current }));
+        }
       }
+      fillModelSelect('llmModel', config.llmModel);
+      fillModelSelect('judgeModel', config.judgeModel);
     })();
 
     document.getElementById('config-form').addEventListener('submit', async function(e) {
@@ -87,8 +145,15 @@
       if (apiKey) updates.albertApiKey = apiKey;
       updates.albertApiBaseUrl = document.getElementById('albertApiBaseUrl').value;
       updates.llmModel = document.getElementById('llmModel').value;
+      updates.judgeModel = document.getElementById('judgeModel').value;
+      updates.evalSamplingRate = parseFloat(document.getElementById('evalSamplingRate').value);
+      updates.evalWideK = parseInt(document.getElementById('evalWideK').value, 10);
       updates.searchK = parseInt(document.getElementById('searchK').value, 10);
       updates.minScore = parseFloat(document.getElementById('minScore').value);
+      updates.searchWideK = parseInt(document.getElementById('searchWideK').value, 10);
+      updates.finalK = parseInt(document.getElementById('finalK').value, 10);
+      updates.rerankMinScore = parseFloat(document.getElementById('rerankMinScore').value);
+      updates.temperature = parseFloat(document.getElementById('temperature').value);
       updates.useRerank = document.getElementById('useRerank').checked;
       updates.ragPromptTemplate = document.getElementById('ragPromptTemplate').value;
       updates.adminContactEmail = document.getElementById('adminContactEmail').value;

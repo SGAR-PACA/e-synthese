@@ -1,4 +1,5 @@
 import { getConfig } from './config.js';
+import { scheduleAlbert } from './albert-limiter.js';
 
 const ALBERT_TIMEOUT_MS = 120_000;
 
@@ -12,11 +13,15 @@ async function albertFetch(path: string, options: RequestInit = {}): Promise<Res
     headers.set('Content-Type', 'application/json');
   }
 
-  return fetch(url, {
-    ...options,
-    headers,
-    signal: options.signal ?? AbortSignal.timeout(ALBERT_TIMEOUT_MS),
-  });
+  // Passe par le limiteur de débit GLOBAL : la clé Albert (quota ~10 req/min) est partagée
+  // par tous les users + l'éval. Le limiteur sérialise et priorise (chat > éval).
+  return scheduleAlbert(() =>
+    fetch(url, {
+      ...options,
+      headers,
+      signal: options.signal ?? AbortSignal.timeout(ALBERT_TIMEOUT_MS),
+    }),
+  );
 }
 
 // Fetch avec ré-essai sur 429/503 (quota Albert 10 req/min). Respecte `Retry-After`

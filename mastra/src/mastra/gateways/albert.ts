@@ -1,8 +1,13 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { MastraModelGateway, type ProviderConfig, type GatewayLanguageModel } from '@mastra/core/llm';
 import { getConfig } from '../../lib/config.js';
+import { scheduleAlbert } from '../../lib/albert-limiter.js';
 
 const DEFAULT_BASE_URL = 'https://albert.api.etalab.gouv.fr';
+
+// `fetch` custom : tout appel LLM du chat (planner/writer/agent) passe par le limiteur
+// de débit GLOBAL, comme les appels de albert-client. Une seule file pour la clé partagée.
+const limitedFetch: typeof fetch = (input, init) => scheduleAlbert(() => fetch(input as any, init));
 
 export class AlbertGateway extends MastraModelGateway {
   readonly id = 'albert';
@@ -18,10 +23,11 @@ export class AlbertGateway extends MastraModelGateway {
       albert: {
         name: 'Albert API',
         models: [
-          'albert-large',
-          'albert-small',
-          'albert-code',
-          'BAAI/bge-m3',
+          'openweight-large',
+          'openweight-medium',
+          'openweight-small',
+          'openweight-code',
+          'bge-m3',
         ],
         apiKeyEnvVar: 'ALBERT_API_KEY',
         gateway: this.id,
@@ -59,6 +65,7 @@ export class AlbertGateway extends MastraModelGateway {
       apiKey,
       baseURL: await this.getBaseUrl(),
       headers,
+      fetch: limitedFetch,
     }).chatModel(modelId);
     return model as unknown as GatewayLanguageModel;
   }
@@ -79,6 +86,7 @@ export class AlbertGateway extends MastraModelGateway {
       apiKey,
       baseURL: await this.getBaseUrl(),
       headers,
+      fetch: limitedFetch,
     }).textEmbeddingModel(modelId);
   }
 }

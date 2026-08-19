@@ -8,11 +8,14 @@ import { contentToText } from '../lib/openai-content.js';
 import { planifier } from '../mastra/pipeline/planner.js';
 import { rechercherMultiple } from '../mastra/pipeline/retrieval.js';
 import { construirePromptRedaction } from '../mastra/pipeline/writer.js';
+import { runRagCore } from '../mastra/pipeline/orchestrate.js';
 import { verifyForwardedUserToken } from '../lib/chat-auth.js';
 import { extractGroups, resolveAllowedCollections } from '../lib/collection-scope.js';
 import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
-import { injectSourceLinks, createSourcesStreamSplitter, type SignFn } from '../lib/sources-linker.js';
+import { getDocumentFileByFilename } from '../lib/db.js';
+import { injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
+import { isRefusal } from '../mastra/scorers/refusal.js';
 import { signSourceToken } from '../lib/source-token.js';
 import { answerContentTokens } from '../lib/highlight-align.js';
 
@@ -97,7 +100,7 @@ export const chatCompletionsRoute = [
       }
 
       const config = await getConfig();
-      const model = config.llmModel || 'albert-large';
+      const model = config.llmModel || 'openweight-large';
       const modelId = `albert/albert/${model}`;
 
       const question = lastUserText(cleanedMessages);
@@ -117,24 +120,24 @@ export const chatCompletionsRoute = [
       }
 
       // ───────────── Mode non-streaming ─────────────
-      const plan = await planifier(question, planner);
+      // Cœur du pipeline mutualisé avec le banc de test admin (voir pipeline/orchestrate.ts).
+      const run = await runRagCore({ question, planner, writer, writerSettings, allowedCollections });
 
       // Cas direct (salutation / conversationnel) : réponse immédiate, pas de recherche, pas de notation.
-      if (plan.type === 'direct') {
-        return c.json(buildCompletion(modelId, model, plan.reponseDirecte, 'stop', undefined));
+      if (run.plan.type === 'direct') {
+        return c.json(buildCompletion(modelId, model, run.answer, 'stop', undefined));
       }
 
-      const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
-      const result: any = await writer.generate(
-        [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
-        { modelSettings: writerSettings },
-      );
-      const clean = stripCitationBrackets(result.text ?? '');
+      const chunks = run.chunks;
+      await remapDocumentIds(chunks);
+      const clean = run.answer; // déjà nettoyée des marqueurs 【】 par runRagCore.
       // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
       maybeScoreLive(question, chunks, clean, config, model);
       const sign = sourceSigner();
-      const answer = sign ? injectSourceLinks(clean, chunks, sign, answerContentTokens(clean)) : clean;
-      return c.json(buildCompletion(modelId, model, answer, result.finishReason || 'stop', result.usage));
+      // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
+      const display = shouldSuppressSources(clean, chunks) ? stripSourcesBlock(clean) : clean;
+      const answer = sign ? injectSourceLinks(display, chunks, sign, answerContentTokens(display)) : display;
+      return c.json(buildCompletion(modelId, model, answer, run.finishReason, run.usage));
     },
   }),
 ];
@@ -181,6 +184,42 @@ function createBracketStripper(): (delta: string) => string {
     }
     return out;
   };
+}
+
+// Albert expose deux espaces d'ID : le `document_id` renvoyé par la RECHERCHE
+// diffère de l'ID d'UPLOAD stocké (albert_document_id). Pour que la visionneuse
+// retrouve le PDF, on remappe l'ID de chaque chunk vers l'ID stocké, via le NOM
+// du document. Cache par nom (peu de documents distincts par réponse). Les docs
+// sans ligne document_files (legacy) restent inchangés (non servables de toute façon).
+async function remapDocumentIds(chunks: RagChunk[]): Promise<void> {
+  const cache = new Map<string, string | null>();
+  for (const ch of chunks) {
+    if (!ch.name) continue;
+    if (!cache.has(ch.name)) {
+      try {
+        const f = await getDocumentFileByFilename(ch.name);
+        cache.set(ch.name, f?.albert_document_id ?? null);
+      } catch (err) {
+        console.error('[sources] remap ID échoué:', (err as Error).message);
+        cache.set(ch.name, null);
+      }
+    }
+    const mapped = cache.get(ch.name);
+    if (mapped) ch.documentId = mapped;
+  }
+}
+
+// Retire le bloc « Sources » final d'une réponse (tout ce qui suit le marqueur).
+function stripSourcesBlock(text: string): string {
+  const idx = text.indexOf(SOURCES_MARKER);
+  return idx >= 0 ? text.slice(0, idx).trimEnd() : text;
+}
+
+// Faut-il masquer le bloc Sources ? Oui si aucune source réelle : rien trouvé
+// (aucun chunk) OU réponse de refus/négative (« ne contiennent pas… »). Dans ces
+// cas les « sources » citées ne sont que les chunks consultés, pas des références utiles.
+function shouldSuppressSources(answer: string, chunks: RagChunk[]): boolean {
+  return chunks.length === 0 || isRefusal(answer);
 }
 
 // Dernier message utilisateur (la question à traiter / noter).
@@ -248,6 +287,7 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
 
         etape(controller, 'Recherche dans les documents…');
         const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
+        await remapDocumentIds(chunks);
 
         etape(controller, 'Rédaction de la réponse…');
         const result: any = await writer.stream(
@@ -270,8 +310,10 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         // Les jetons proviennent du corps COMPLET de la réponse (fullText), pas du seul
         // bloc Sources -> le surlignage ne cible que ce que l'IA a réellement écrit.
         const answerTokens = answerContentTokens(fullText);
+        // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
+        const suppress = shouldSuppressSources(fullText, chunks);
         const tail = splitter.finalize((block) =>
-          sign ? injectSourceLinks(block, chunks, sign, answerTokens) : block,
+          suppress ? '' : sign ? injectSourceLinks(block, chunks, sign, answerTokens) : block,
         );
         if (tail.length > 0) send(controller, { content: tail });
 
