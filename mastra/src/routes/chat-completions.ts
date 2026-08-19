@@ -8,6 +8,7 @@ import { contentToText } from '../lib/openai-content.js';
 import { planifier } from '../mastra/pipeline/planner.js';
 import { rechercherMultiple } from '../mastra/pipeline/retrieval.js';
 import { construirePromptRedaction } from '../mastra/pipeline/writer.js';
+import { runRagCore } from '../mastra/pipeline/orchestrate.js';
 import { verifyForwardedUserToken } from '../lib/chat-auth.js';
 import { extractGroups, resolveAllowedCollections } from '../lib/collection-scope.js';
 import type { AppConfig } from '../lib/config.js';
@@ -99,7 +100,7 @@ export const chatCompletionsRoute = [
       }
 
       const config = await getConfig();
-      const model = config.llmModel || 'albert-large';
+      const model = config.llmModel || 'openweight-large';
       const modelId = `albert/albert/${model}`;
 
       const question = lastUserText(cleanedMessages);
@@ -119,27 +120,24 @@ export const chatCompletionsRoute = [
       }
 
       // ───────────── Mode non-streaming ─────────────
-      const plan = await planifier(question, planner);
+      // Cœur du pipeline mutualisé avec le banc de test admin (voir pipeline/orchestrate.ts).
+      const run = await runRagCore({ question, planner, writer, writerSettings, allowedCollections });
 
       // Cas direct (salutation / conversationnel) : réponse immédiate, pas de recherche, pas de notation.
-      if (plan.type === 'direct') {
-        return c.json(buildCompletion(modelId, model, plan.reponseDirecte, 'stop', undefined));
+      if (run.plan.type === 'direct') {
+        return c.json(buildCompletion(modelId, model, run.answer, 'stop', undefined));
       }
 
-      const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
+      const chunks = run.chunks;
       await remapDocumentIds(chunks);
-      const result: any = await writer.generate(
-        [{ role: 'user', content: construirePromptRedaction(question, chunks) }],
-        { modelSettings: writerSettings },
-      );
-      const clean = stripCitationBrackets(result.text ?? '');
+      const clean = run.answer; // déjà nettoyée des marqueurs 【】 par runRagCore.
       // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
       maybeScoreLive(question, chunks, clean, config, model);
       const sign = sourceSigner();
       // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
       const display = shouldSuppressSources(clean, chunks) ? stripSourcesBlock(clean) : clean;
       const answer = sign ? injectSourceLinks(display, chunks, sign, answerContentTokens(display)) : display;
-      return c.json(buildCompletion(modelId, model, answer, result.finishReason || 'stop', result.usage));
+      return c.json(buildCompletion(modelId, model, answer, run.finishReason, run.usage));
     },
   }),
 ];

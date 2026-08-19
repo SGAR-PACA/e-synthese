@@ -6,6 +6,8 @@ import { requireAuth, requireAdmin, verifyCsrf, getAuth, getClientIp } from '../
 import { validatePassword } from '../lib/crypto.js';
 import * as albert from '../lib/albert-client.js';
 import { scoreRun } from '../mastra/scorers/run.js';
+import { runRagCore } from '../mastra/pipeline/orchestrate.js';
+import type { RagChunk } from '../lib/db.js';
 import { parseCitedSources } from '../lib/cited-sources.js';
 
 await initConfigFromEnv();
@@ -259,114 +261,90 @@ export const adminApiRoute = [
       const config = await getConfig();
       const ip = getClientIp(c);
 
-      const collections = authResult.user.role === 'admin'
-        ? config.defaultCollections
-        : authResult.collections;
+      // Périmètre de recherche IDENTIQUE au chat : admin = accès non restreint (null → toutes
+      // les collections, comme le repli chat), non-admin = ses collections autorisées (groupes).
+      const allowedCollections: number[] | null =
+        authResult.user.role === 'admin' ? null : authResult.collections;
 
-      if (collections.length === 0) {
-        return c.json({ error: 'No collections configured' }, 400);
+      // Pipeline FIDÈLE au chat de production (planif → pêche large → rerank → rédaction),
+      // via la fonction partagée : tout paramètre réglé dans l'admin agit ici à l'identique.
+      const planner = c.get('mastra').getAgent('plannerAgent');
+      const writer = c.get('mastra').getAgent('writerAgent');
+      const writerSettings = { temperature: config.temperature, maxOutputTokens: undefined };
+
+      let run;
+      try {
+        run = await runRagCore({ question: query, planner, writer, writerSettings, allowedCollections });
+      } catch (err: any) {
+        return c.json({ error: `Pipeline échoué : ${err?.message || err}` }, 500);
       }
 
-      const steps: any[] = [];
+      await db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}"`);
 
-      let chunks: any[] = [];
-      try {
-        const searchResults = await albert.search({
+      // Snapshot des paramètres RÉELLEMENT appliqués (pour le réglage fin + export JSON).
+      const params = {
+        generation: {
+          llmModel: config.llmModel,
+          temperature: config.temperature,
+          useRerank: config.useRerank,
+          searchWideK: config.searchWideK,
+          finalK: config.finalK,
+          rerankMinScore: config.rerankMinScore,
+          searchK: config.searchK,
+          minScore: config.minScore,
+        },
+        judge: {
+          judgeModel: config.judgeModel,
+          evalWideK: config.evalWideK,
+        },
+        collections: allowedCollections,
+      };
+
+      const chunkView = (ch: RagChunk) => ({ name: ch.name, score: ch.score, content: ch.content });
+
+      // Cas direct (conversationnel) : pas de RAG ni de notation.
+      if (run.plan.type === 'direct') {
+        return c.json({
           query,
-          collections,
-          k: config.searchK,
+          params,
+          plan: { type: 'direct' },
+          usedChunks: [],
+          wideChunks: [],
+          answer: run.answer,
+          scores: [],
+          isRefusal: false,
+          runId: null,
+          note: 'Question conversationnelle (plan direct) : pas de recherche ni de notation.',
         });
-        chunks = (searchResults.data || []).filter((r: any) => r.score >= config.minScore);
-        steps.push({
-          step: 'search',
-          status: 'ok',
-          resultCount: searchResults.data?.length || 0,
-          afterFilter: chunks.length,
-          results: chunks.slice(0, 5),
-        });
-      } catch (err: any) {
-        steps.push({ step: 'search', status: 'error', error: err.message });
       }
 
-      if (config.useRerank && chunks.length > 0) {
-        try {
-          const rerankResults = await albert.rerank({
-            query,
-            documents: chunks.map((r: any) => r.chunk?.content || r.content || ''),
-          });
-          if (rerankResults.results) {
-            chunks = rerankResults.results
-              .sort((a: any, b: any) => b.relevance_score - a.relevance_score)
-              .slice(0, config.searchK)
-              .map((r: any) => ({
-                score: r.relevance_score,
-                chunk: { content: chunks[r.index]?.chunk?.content || '' },
-              }));
-          }
-          steps.push({
-            step: 'rerank',
-            status: 'ok',
-            resultCount: chunks.length,
-            results: chunks.slice(0, 5),
-          });
-        } catch (err: any) {
-          steps.push({ step: 'rerank', status: 'error', error: err.message });
-        }
-      } else {
-        steps.push({ step: 'rerank', status: 'skipped' });
-      }
-
-      const context = chunks
-        .map((r: any, i: number) => `[Source ${i + 1}] ${r.chunk?.content || ''}`)
-        .join('\n\n---\n\n');
-      const systemContent = config.ragPromptTemplate.replace('{context}', context);
-      steps.push({
-        step: 'augmentation',
-        status: 'ok',
-        systemPromptLength: systemContent.length,
-        contextChunks: chunks.length,
-      });
-
-      let answer = '';
+      // Notation SYNCHRONE (banc de test) : on ATTEND les notes du juge pour les afficher,
+      // contrairement au chat live (fire-and-forget). Le résultat est aussi persisté (source 'test').
+      let scoreResult: { scores: any[]; isRefusal: boolean; runId: number | null; used: RagChunk[]; wide: RagChunk[] };
       try {
-        const chatResponse = await albert.chatCompletions({
-          model: config.llmModel,
-          messages: [
-            { role: 'system', content: systemContent },
-            { role: 'user', content: query },
-          ],
-          stream: false,
-        });
-        const chatData = await chatResponse.json();
-        answer = chatData.choices?.[0]?.message?.content || '';
-        steps.push({
-          step: 'llm',
-          status: 'ok',
-          response: answer,
+        scoreResult = await scoreRun({
+          question: query,
+          answer: run.answer,
+          usedChunks: run.chunks,
+          source: 'test',
+          genModel: config.llmModel,
         });
       } catch (err: any) {
-        steps.push({ step: 'llm', status: 'error', error: err.message });
+        scoreResult = { scores: [{ metric: 'erreur', score: 0, reason: String(err?.message || err) }], isRefusal: false, runId: null, used: run.chunks, wide: [] };
       }
 
-      await db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}" collections=[${collections}]`);
-
-      // Notation Mastra du test (fire-and-forget) → apparaît dans /admin/eval (source 'test').
-      // Ne bloque pas la réponse du test ; les 4 juges tournent en arrière-plan (~30 s).
-      if (answer) {
-        const usedChunks = chunks.map((r: any) => {
-          const md = r.chunk?.metadata || {};
-          return {
-            name: md.document_name || md.name || md.title || md.filename || '',
-            content: r.chunk?.content || r.content || '',
-            score: r.score ?? 0,
-            url: md.directory_url || md.url || md.source_url || '',
-          };
-        });
-        void scoreRun({ question: query, answer, usedChunks, source: 'test', genModel: config.llmModel })
-          .catch((e: any) => console.error('[eval] scoring test-pipeline échoué:', e?.message || e));
-      }
-
-      return c.json({ query, steps });
+      return c.json({
+        query,
+        params,
+        plan: { type: 'recherche', requetes: run.plan.requetes },
+        usedChunks: run.chunks.map(chunkView),
+        wideChunks: (scoreResult.wide || []).map(chunkView),
+        answer: run.answer,
+        finishReason: run.finishReason,
+        scores: scoreResult.scores,
+        isRefusal: scoreResult.isRefusal,
+        runId: scoreResult.runId,
+      });
     },
   }),
 
@@ -401,10 +379,32 @@ export const adminApiRoute = [
         'albertApiKey', 'albertApiBaseUrl', 'llmModel',
         'defaultCollections', 'searchK', 'minScore',
         'useRerank', 'ragPromptTemplate', 'adminContactEmail',
+        'judgeModel', 'evalSamplingRate',
+        // Leviers de précision du pipeline RAG + éval.
+        'temperature', 'searchWideK', 'finalK', 'rerankMinScore', 'evalWideK',
       ];
       const updates: Record<string, any> = {};
       for (const key of allowed) {
         if (body[key] !== undefined) updates[key] = body[key];
+      }
+
+      // Validation des paramètres numériques (bornes + type) avant persistance.
+      // [key, min, max, entier?]
+      const numericBounds: Array<[string, number, number, boolean]> = [
+        ['evalSamplingRate', 0, 1, false],
+        ['temperature', 0, 2, false],
+        ['rerankMinScore', 0, 1, false],
+        ['searchWideK', 1, 100, true],
+        ['finalK', 1, 50, true],
+        ['evalWideK', 1, 100, true],
+      ];
+      for (const [key, min, max, isInt] of numericBounds) {
+        if (updates[key] === undefined) continue;
+        const v = Number(updates[key]);
+        if (!Number.isFinite(v) || v < min || v > max || (isInt && !Number.isInteger(v))) {
+          return c.json({ error: `${key} doit être un ${isInt ? 'entier' : 'nombre'} entre ${min} et ${max}` }, 400);
+        }
+        updates[key] = v;
       }
 
       if (Object.keys(updates).length === 0) {
@@ -430,7 +430,20 @@ export const adminApiRoute = [
       try {
         const models = await albert.listModels();
         albertStatus = 'connected';
-        albertModels = (models.data || []).map((m: any) => m.id);
+        // N'expose QUE les modèles capables de chat (génération + juge) : on écarte
+        // embeddings, rerank, audio et OCR (types non conversationnels). On préfère
+        // l'alias `openweight-*` — cohérent avec les défauts et stable entre versions.
+        albertModels = (models.data || [])
+          .filter((m: any) => {
+            const type = String(m.type || '');
+            if (type !== 'text-generation' && type !== 'image-text-to-text') return false;
+            const tokens = [m.id, ...(m.aliases || [])].join(' ').toLowerCase();
+            return !/ocr|whisper|audio|embed|rerank/.test(tokens);
+          })
+          .map((m: any) => {
+            const ow = (m.aliases || []).find((a: string) => a.startsWith('openweight-'));
+            return ow || m.id;
+          });
       } catch {
         albertStatus = 'error';
       }

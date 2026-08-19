@@ -2,7 +2,6 @@ import { Mastra } from '@mastra/core';
 import { startDocumentWorker } from '../lib/document-worker.js';
 import { PostgresStore } from '@mastra/pg';
 import { collectionsRoute, groupCollectionsRoute, documentsRoute, searchRoute, chatCompletionsRoute, modelsRoute, adminApiRoute, adminUiRoute, scoresRoute, sourcesAuthRoute, sourcesRoute, sourcesAssetsRoute, ratingsRoute } from '../routes';
-import { ragScorers } from './scorers/index.js';
 import { AlbertGateway } from './gateways/albert';
 import { ragAgent } from './agents/rag-agent';
 import { plannerAgent } from './pipeline/planner.js';
@@ -20,7 +19,6 @@ export const mastra = new Mastra({
   ...(storage ? { storage } : {}),
   gateways: { albert: new AlbertGateway() },
   agents: { ragAgent, plannerAgent, writerAgent },
-  scorers: ragScorers,
   server: {
     port: Number(process.env.PORT) || 4111,
     // Autoriser l'origine du front à appeler Mastra (requêtes cross-origin avec Authorization).

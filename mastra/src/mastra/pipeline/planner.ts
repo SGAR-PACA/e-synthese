@@ -49,7 +49,7 @@ export const plannerAgent = new Agent({
   name: 'E-Synthèse Planner',
   instructions: INSTRUCTIONS,
   model: async () => {
-    const model = (await getConfig()).llmModel || 'albert-large';
+    const model = (await getConfig()).llmModel || 'openweight-large';
     return `albert/albert/${model}` as any;
   },
 });

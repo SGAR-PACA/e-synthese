@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-Synthese Admin - Test Pipeline</title>
+  <title>E-Synthese Admin - Banc de test</title>
   <link rel="stylesheet" href="/admin/pico.min.css">
   <link rel="stylesheet" href="/admin/style.css">
 </head>
 <body>
   <nav id="main-nav"></nav>
-  <h2>Test du Pipeline RAG</h2>
+  <h2>Banc de test RAG</h2>
   <div id="msg" class="message"></div>
-  <p>Testez le pipeline complet : recherche, reranking, augmentation, LLM. Chaque étape est détaillée.</p>
+  <p>Exécute le <strong>pipeline complet identique au chat de production</strong> (planification → pêche large → rerank → rédaction) puis la <strong>notation IA-juge</strong>. Affiche les paramètres appliqués, les passages récupérés, la réponse et les notes — pour régler finement et juger la pertinence d'une question.</p>
   <form id="test-form">
     <label for="query">Question de test</label>
-    <input type="text" id="query" required placeholder="Ex: Quels documents faut-il pour renouveler une carte d'identite ?">
+    <input type="text" id="query" required placeholder="Ex: Quels documents faut-il pour renouveler une carte d'identité ?">
     <button type="submit" id="test-btn">Lancer le test</button>
   </form>
   <div id="results" style="margin-top:1.5rem;"></div>
@@ -25,61 +25,148 @@
       buildNav('test');
     })();
 
-    var stepNames = {
-      search: 'Recherche semantique',
-      rerank: 'Reranking',
-      augmentation: 'Augmentation du prompt',
-      llm: 'Réponse LLM'
+    var lastResult = null;
+    var runLog = []; // journal cumulatif de tous les tests de la session (exporté en JSON).
+
+    var METRIC_LABELS = {
+      system_prompt: 'Conformité (prompt système)',
+      faithfulness: 'Fidélité (anti-hallucination)',
+      completeness: 'Complétude',
+      retrieval_quality: 'Qualité du retrieval',
+      erreur: 'Erreur',
     };
 
-    function renderStep(step) {
-      var statusClass = step.status === 'ok' ? 'ok' : step.status === 'skipped' ? 'unknown' : 'error';
-      var div = createEl('div', { className: 'pipeline-step' });
-      div.appendChild(createEl('h4', {}, [
-        document.createTextNode((stepNames[step.step] || step.step) + ' '),
-        createEl('span', { className: 'status-badge ' + statusClass, textContent: step.status }),
-      ]));
+    // Classe de badge selon la note (repris des status-badge du thème).
+    function scoreClass(s) {
+      if (s >= 0.8) return 'ok';
+      if (s >= 0.5) return 'unknown';
+      return 'error';
+    }
 
-      if (step.step === 'search') {
-        div.appendChild(createEl('p', { textContent: 'Résultats bruts : ' + (step.resultCount || 0) + ' | Après filtre score : ' + (step.afterFilter || 0) }));
-        if (step.results && step.results.length) {
-          var preview = step.results.map(function(r) {
-            return { score: r.score ? r.score.toFixed(3) : '?', content: ((r.chunk && r.chunk.content) || '').slice(0, 150) + '...' };
-          });
-          div.appendChild(createEl('pre', { textContent: JSON.stringify(preview, null, 2) }));
-        }
-      } else if (step.step === 'rerank') {
-        if (step.status === 'skipped') {
-          div.appendChild(createEl('p', { textContent: 'Reranking désactivé dans la configuration.' }));
-        } else {
-          div.appendChild(createEl('p', { textContent: 'Résultats rerankés : ' + (step.resultCount || 0) }));
-          if (step.results && step.results.length) {
-            var preview = step.results.map(function(r) {
-              return { score: r.score ? r.score.toFixed(3) : '?', content: ((r.chunk && r.chunk.content) || '').slice(0, 150) + '...' };
-            });
-            div.appendChild(createEl('pre', { textContent: JSON.stringify(preview, null, 2) }));
-          }
-        }
-      } else if (step.step === 'augmentation') {
-        div.appendChild(createEl('p', { textContent: 'Chunks injectés : ' + step.contextChunks + ' | Taille prompt système : ' + step.systemPromptLength + ' chars' }));
-      } else if (step.step === 'llm') {
-        if (step.response) {
-          var pre = createEl('pre', { textContent: step.response });
-          pre.style.whiteSpace = 'pre-wrap';
-          div.appendChild(pre);
-        } else {
-          div.appendChild(createEl('p', { textContent: 'Erreur : ' + (step.error || 'inconnue') }));
-        }
+    function section(title) {
+      var d = createEl('div', { className: 'pipeline-step' });
+      d.appendChild(createEl('h4', { textContent: title }));
+      return d;
+    }
+
+    // Bloc clé/valeur compact pour les paramètres.
+    function paramTable(obj) {
+      var pre = createEl('pre', { textContent: JSON.stringify(obj, null, 2) });
+      pre.style.whiteSpace = 'pre-wrap';
+      return pre;
+    }
+
+    function renderChunks(container, chunks) {
+      if (!chunks || !chunks.length) {
+        container.appendChild(createEl('p', { textContent: '(aucun)' }));
+        return;
       }
-
-      if (step.error && step.step !== 'llm') {
-        div.appendChild(createEl('p', {}, [
-          createEl('strong', { textContent: 'Erreur : ' }),
-          document.createTextNode(step.error),
+      chunks.forEach(function(ch, i) {
+        var wrap = createEl('div');
+        wrap.style.borderTop = '1px solid var(--pico-muted-border-color, #ddd)';
+        wrap.style.padding = '0.4rem 0';
+        var scoreTxt = (typeof ch.score === 'number') ? ch.score.toFixed(3) : '?';
+        wrap.appendChild(createEl('p', { style: 'margin:0' }, [
+          createEl('strong', { textContent: '#' + (i + 1) + ' ' }),
+          createEl('span', { className: 'status-badge ' + scoreClass(ch.score), textContent: 'score ' + scoreTxt }),
+          document.createTextNode('  ' + (ch.name || '(document sans nom)')),
         ]));
+        var content = createEl('pre', { textContent: (ch.content || '').slice(0, 600) + ((ch.content || '').length > 600 ? '…' : '') });
+        content.style.whiteSpace = 'pre-wrap';
+        content.style.margin = '0.3rem 0 0';
+        wrap.appendChild(content);
+        container.appendChild(wrap);
+      });
+    }
+
+    // Export du JOURNAL complet (tous les tests de la session) → fichier de log pour analyse/IA.
+    function downloadJson() {
+      if (!runLog.length) return;
+      var payload = { exportedRuns: runLog.length, runs: runLog };
+      var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'banc-test-log-' + runLog.length + '-tests.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function render(result) {
+      var container = document.getElementById('results');
+      clearEl(container);
+
+      var head = createEl('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap' });
+      head.appendChild(createEl('h3', { textContent: 'Résultats : "' + result.query + '"', style: 'margin:0' }));
+      var dlBtn = createEl('button', { textContent: '⬇ Télécharger le log JSON (' + runLog.length + ' test' + (runLog.length > 1 ? 's' : '') + ')', className: 'secondary' });
+      dlBtn.style.width = 'auto';
+      dlBtn.addEventListener('click', downloadJson);
+      head.appendChild(dlBtn);
+      container.appendChild(head);
+
+      if (result.note) {
+        container.appendChild(createEl('p', { textContent: 'ℹ ' + result.note }));
       }
 
-      return div;
+      // Paramètres appliqués
+      var p = section('Paramètres appliqués');
+      p.appendChild(paramTable(result.params));
+      container.appendChild(p);
+
+      // Plan
+      var pl = section('Plan (planificateur)');
+      if (result.plan && result.plan.type === 'recherche') {
+        var ul = createEl('ul');
+        (result.plan.requetes || []).forEach(function(r) { ul.appendChild(createEl('li', { textContent: r })); });
+        pl.appendChild(createEl('p', { textContent: 'Sous-requêtes générées :' }));
+        pl.appendChild(ul);
+      } else {
+        pl.appendChild(createEl('p', { textContent: 'Réponse directe (conversationnelle) — pas de recherche.' }));
+      }
+      container.appendChild(pl);
+
+      // Réponse
+      var ans = section('Réponse générée');
+      if (result.isRefusal) ans.querySelector('h4').appendChild(createEl('span', { className: 'status-badge unknown', textContent: 'refus détecté', style: 'margin-left:.5rem' }));
+      var ansPre = createEl('pre', { textContent: result.answer || '(vide)' });
+      ansPre.style.whiteSpace = 'pre-wrap';
+      ans.appendChild(ansPre);
+      container.appendChild(ans);
+
+      // Notation IA-juge
+      var jd = section('Notation IA-juge');
+      if (!result.scores || !result.scores.length) {
+        jd.appendChild(createEl('p', { textContent: 'Pas de notation (question conversationnelle ou éval indisponible).' }));
+      } else {
+        result.scores.forEach(function(s) {
+          var row = createEl('div', { style: 'border-top:1px solid var(--pico-muted-border-color,#ddd);padding:0.4rem 0' });
+          row.appendChild(createEl('p', { style: 'margin:0' }, [
+            createEl('span', { className: 'status-badge ' + scoreClass(s.score), textContent: (typeof s.score === 'number' ? s.score.toFixed(2) : '?') }),
+            createEl('strong', { textContent: '  ' + (METRIC_LABELS[s.metric] || s.metric) }),
+          ]));
+          row.appendChild(createEl('p', { textContent: s.reason || '', style: 'margin:0.2rem 0 0;color:var(--pico-muted-color,#666)' }));
+          jd.appendChild(row);
+        });
+      }
+      container.appendChild(jd);
+
+      // Chunks utilisés
+      var uc = section('Passages utilisés (' + (result.usedChunks ? result.usedChunks.length : 0) + ')');
+      renderChunks(uc, result.usedChunks);
+      container.appendChild(uc);
+
+      // Vivier élargi (repliable)
+      var wide = result.wideChunks || [];
+      var wd = createEl('details');
+      wd.appendChild(createEl('summary', { textContent: 'Vivier élargi — candidats retrieval_quality (' + wide.length + ')' }));
+      var wdInner = createEl('div');
+      renderChunks(wdInner, wide);
+      wd.appendChild(wdInner);
+      var wdWrap = section('Vivier élargi');
+      wdWrap.appendChild(wd);
+      container.appendChild(wdWrap);
     }
 
     document.getElementById('test-form').addEventListener('submit', async function(e) {
@@ -88,21 +175,20 @@
       var btn = document.getElementById('test-btn');
       var container = document.getElementById('results');
       btn.disabled = true;
-      btn.textContent = 'Test en cours...';
+      btn.textContent = 'Test en cours (pipeline + juge)…';
       clearEl(container);
-      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Execution du pipeline...' }));
+      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Exécution du pipeline et notation…' }));
       var result = await apiPost('/admin/test-pipeline', { query: query });
       btn.disabled = false;
       btn.textContent = 'Lancer le test';
-      clearEl(container);
-      if (!result || !result.steps) {
-        container.appendChild(createEl('p', { textContent: 'Erreur lors du test.' }));
+      if (!result || result.error) {
+        clearEl(container);
+        container.appendChild(createEl('p', { textContent: 'Erreur : ' + ((result && result.error) || 'inconnue') }));
         return;
       }
-      container.appendChild(createEl('h3', { textContent: 'Résultats pour : "' + result.query + '"' }));
-      result.steps.forEach(function(step) {
-        container.appendChild(renderStep(step));
-      });
+      lastResult = result;
+      runLog.push(result); // cumule dans le journal exportable.
+      render(result);
     });
   </script>
 </body>
