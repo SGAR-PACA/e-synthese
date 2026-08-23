@@ -478,7 +478,9 @@ services:
     volumes:
       - ./front-back/docker/auth/provision-mastra-sources-client.sh:/opt/provision-mastra-sources.sh:ro
     entrypoint: /bin/sh
-    command: ["-c", "/opt/provision-mastra-sources.sh"]
+    # Le fichier est monté depuis Git et peut ne pas conserver le bit x.
+    # L'invoquer via sh évite un exit 126 (Permission denied).
+    command: ["-c", "exec /bin/sh /opt/provision-mastra-sources.sh"]
     networks:
       - default
 
