@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeAlignedHighlights, normalizeWord, answerContentTokens } from '../src/lib/highlight-align.js';
+import { computeAlignedHighlights, normalizeWord } from '../src/lib/highlight-align.js';
 
 function buildPdf(pages: string[][]): Uint8Array {
   const objects: string[] = [];
@@ -57,22 +57,7 @@ test('computeAlignedHighlights : cache par cacheKey donne un résultat identique
   assert.deepEqual(second.report, first.report);
 });
 
-test('answerContentTokens : chiffres + mots distinctifs, ignore mots-outils et bloc Sources', () => {
-  const toks = answerContentTokens(
-    'La region prevoit 68 fermetures pour 2025.\n\n**Sources :**\n- Source 1 : Document 4735150',
-  );
-  assert.ok(toks.has('region'), 'garde "region"');
-  assert.ok(toks.has('prevoit'), 'garde "prevoit"');
-  assert.ok(toks.has('68'), 'garde le chiffre "68"');
-  assert.ok(toks.has('2025'), 'garde "2025"');
-  assert.ok(toks.has('fermetures'), 'garde "fermetures"');
-  assert.ok(!toks.has('pour'), 'ignore le mot-outil "pour"');
-  assert.ok(!toks.has('la'), 'ignore les mots trop courts');
-  assert.ok(!toks.has('document'), 'ignore le bloc Sources (mot "Document")');
-  assert.ok(!toks.has('4735150'), 'ignore le bloc Sources (id du document)');
-});
-
-test('computeAlignedHighlights : restriction reponse ∩ source (ne surligne que ce que l’IA a dit)', () => {
+test('computeAlignedHighlights : chunk ENTIER surligné (table Markdown incluse), pas un sous-ensemble', () => {
   const pdf = buildPdf([
     ['La demande economique de la region continue'],
     ['Tableau 68 858 790 fermetures par departement'],
@@ -85,18 +70,21 @@ test('computeAlignedHighlights : restriction reponse ∩ source (ne surligne que
       '| Tableau | 68 | 858 | 790 | fermetures par departement |\n' +
       'Nous navons aucun element supplementaire disponible',
   }];
+  // Tout le chunk s'aligne -> les 3 pages (prose + tableau + prose) sont surlignées.
+  const { pages } = computeAlignedHighlights(pdf, chunk);
+  assert.deepEqual(pages.map((p) => p.page), [1, 2, 3], 'chunk entier = 3 pages, y compris la ligne de tableau');
+});
 
-  // Sans restriction : tout le chunk s’aligne -> les 3 pages sont surlignées.
-  const full = computeAlignedHighlights(pdf, chunk);
-  assert.deepEqual(full.pages.map((p) => p.page), [1, 2, 3], 'chunk entier = 3 pages');
-
-  // Avec restriction : la réponse ne mentionne que la prose de p1 et le « 68 » de p2,
-  // jamais la phrase de p3 -> seules p1 et p2 restent surlignées.
-  const tokens = answerContentTokens(
-    'La demande economique de la region prevoit 68 fermetures selon le tableau.',
-  );
-  const restricted = computeAlignedHighlights(pdf, chunk, undefined, tokens);
-  assert.deepEqual(restricted.pages.map((p) => p.page), [1, 2], 'réponse ∩ source = p1 + p2, pas p3');
+test('computeAlignedHighlights : césure — un mot coupé en fin de ligne est réaligné', () => {
+  // mupdf lit « anticonstitution- » et « nellement » comme 2 tokens sur 2 lignes.
+  // Le chunk (linéarisé par Albert) contient le mot entier. Sans gestion de la
+  // césure, ce mot ne matche NI l'un NI l'autre fragment.
+  const pdf = buildPdf([['Le mot anticonstitution-', 'nellement termine la phrase']]);
+  const chunk = 'Le mot anticonstitutionnellement termine la phrase';
+  const { pages, report } = computeAlignedHighlights(pdf, [{ id: 'c1', content: chunk }]);
+  const cov = report[0].matched / report[0].words;
+  assert.ok(cov >= 0.95, `couverture ${Math.round(cov * 100)}% attendue >= 95% (mot coupé recollé)`);
+  assert.ok(pages.length >= 1 && pages[0].rects.length >= 1);
 });
 
 test('computeAlignedHighlights : pas de parasite sur phrase répétée', () => {

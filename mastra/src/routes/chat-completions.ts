@@ -18,7 +18,6 @@ import { pickDocumentFile } from '../lib/source-resolve.js';
 import { injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
 import { signSourceToken } from '../lib/source-token.js';
-import { answerContentTokens } from '../lib/highlight-align.js';
 
 // Lie un signeur seulement si la clé est configurée ; sinon pas de liens (dégradation douce).
 function sourceSigner(): SignFn | undefined {
@@ -137,7 +136,7 @@ export const chatCompletionsRoute = [
       const sign = sourceSigner();
       // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
       const display = shouldSuppressSources(clean, chunks) ? stripSourcesBlock(clean) : clean;
-      const answer = sign ? injectSourceLinks(display, chunks, sign, answerContentTokens(display)) : display;
+      const answer = sign ? injectSourceLinks(display, chunks, sign) : display;
       return c.json(buildCompletion(modelId, model, answer, run.finishReason, run.usage));
     },
   }),
@@ -325,13 +324,10 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
           if (emit.length > 0) send(controller, { content: emit });
         }
         // Bloc Sources final : réécrit en liens signés (ou tel quel si pas de clé).
-        // Les jetons proviennent du corps COMPLET de la réponse (fullText), pas du seul
-        // bloc Sources -> le surlignage ne cible que ce que l'IA a réellement écrit.
-        const answerTokens = answerContentTokens(fullText);
         // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
         const suppress = shouldSuppressSources(fullText, chunks);
         const tail = splitter.finalize((block) =>
-          suppress ? '' : sign ? injectSourceLinks(block, chunks, sign, answerTokens) : block,
+          suppress ? '' : sign ? injectSourceLinks(block, chunks, sign) : block,
         );
         if (tail.length > 0) send(controller, { content: tail });
 
