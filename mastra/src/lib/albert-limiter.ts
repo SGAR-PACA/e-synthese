@@ -26,10 +26,15 @@ export interface RateLimiter {
   schedule<T>(fn: () => Promise<T>): Promise<T>;
   /** Exécute `fn` en marquant la priorité pour tous les appels Albert qu'il déclenche. */
   withPriority<T>(priority: Priority, fn: () => Promise<T>): Promise<T>;
+  /** Modifie le plafond sans redémarrer le processus. */
+  setMaxPerWindow(value: number): void;
+  /** Retourne le plafond actif. */
+  getMaxPerWindow(): number;
 }
 
 export function createRateLimiter(opts: { maxPerWindow: number; windowMs: number }): RateLimiter {
-  const { maxPerWindow, windowMs } = opts;
+  const { windowMs } = opts;
+  let maxPerWindow = Math.max(1, Math.floor(opts.maxPerWindow));
   const store = new AsyncLocalStorage<Priority>();
   const highQ: Job[] = [];
   const lowQ: Job[] = [];
@@ -76,16 +81,26 @@ export function createRateLimiter(opts: { maxPerWindow: number; windowMs: number
     withPriority<T>(priority: Priority, fn: () => Promise<T>): Promise<T> {
       return store.run(priority, fn);
     },
+    setMaxPerWindow(value: number): void {
+      if (!Number.isFinite(value) || value < 1) return;
+      maxPerWindow = Math.floor(value);
+      pump();
+    },
+    getMaxPerWindow(): number {
+      return maxPerWindow;
+    },
   };
 }
 
-// Instance partagée par tout le process. Défaut : 9 req/min (1 de marge sous le quota
+// Instance partagée par tout le process. Défaut : 8 req/min (2 de marge sous le quota
 // dur de 10), réglable via ALBERT_MAX_RPM pour s'adapter à un quota partenaire plus large.
-const MAX_RPM = Number(process.env.ALBERT_MAX_RPM || 9);
+const MAX_RPM = Number(process.env.ALBERT_MAX_RPM || 8);
 export const albertLimiter = createRateLimiter({
-  maxPerWindow: Number.isFinite(MAX_RPM) && MAX_RPM > 0 ? MAX_RPM : 9,
+  maxPerWindow: Number.isFinite(MAX_RPM) && MAX_RPM > 0 ? MAX_RPM : 8,
   windowMs: 60_000,
 });
 
 export const scheduleAlbert = albertLimiter.schedule;
 export const withPriority = albertLimiter.withPriority;
+export const configureAlbertRateLimit = (maxRpm: number): void => albertLimiter.setMaxPerWindow(maxRpm);
+export const getAlbertRateLimit = (): number => albertLimiter.getMaxPerWindow();

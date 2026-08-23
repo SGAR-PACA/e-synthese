@@ -27,3 +27,5 @@ data/
 docs/specs/
 docs/plans/
 .superpowers/
+.playwright-mcp/
+docs/mastra-tuning-procedure.md

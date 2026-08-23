@@ -9,8 +9,11 @@ import { scoreRun } from '../mastra/scorers/run.js';
 import { runRagCore } from '../mastra/pipeline/orchestrate.js';
 import type { RagChunk } from '../lib/db.js';
 import { parseCitedSources } from '../lib/cited-sources.js';
+import { configureAlbertRateLimit } from '../lib/albert-limiter.js';
+import { isRefusal } from '../mastra/scorers/refusal.js';
 
 await initConfigFromEnv();
+configureAlbertRateLimit((await getConfig()).albertMaxRpm);
 
 export const adminApiRoute = [
   registerApiRoute('/admin/auth-status', {
@@ -253,7 +256,9 @@ export const adminApiRoute = [
       const csrfError = verifyCsrf(c, authResult);
       if (csrfError) return csrfError;
 
-      const { query } = await c.req.json();
+      const body = await c.req.json();
+      const query = body?.query;
+      const withJudge = body?.withJudge !== false;
       if (!query) {
         return c.json({ error: 'query is required' }, 400);
       }
@@ -270,22 +275,35 @@ export const adminApiRoute = [
       // via la fonction partagée : tout paramètre réglé dans l'admin agit ici à l'identique.
       const planner = c.get('mastra').getAgent('plannerAgent');
       const writer = c.get('mastra').getAgent('writerAgent');
-      const writerSettings = { temperature: config.temperature, maxOutputTokens: undefined };
+      const writerSettings = {
+        temperature: config.temperature,
+        topP: config.topP < 1 ? config.topP : undefined,
+        maxOutputTokens: config.maxOutputTokens,
+      };
 
       let run;
       try {
-        run = await runRagCore({ question: query, planner, writer, writerSettings, allowedCollections });
+        run = await runRagCore({ question: query, planner, writer, writerSettings, allowedCollections, config });
       } catch (err: any) {
         return c.json({ error: `Pipeline échoué : ${err?.message || err}` }, 500);
       }
 
       await db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}"`);
 
+      const queryCount = run.plan.type === 'recherche' ? run.plan.requetes.length : 0;
+      const pipelineRequestBudget = run.plan.type === 'recherche'
+        ? 1 + queryCount + (config.useRerank ? 1 : 0) + 1
+        : 1;
+
       // Snapshot des paramètres RÉELLEMENT appliqués (pour le réglage fin + export JSON).
       const params = {
         generation: {
           llmModel: config.llmModel,
+          albertMaxRpm: config.albertMaxRpm,
           temperature: config.temperature,
+          topP: config.topP,
+          maxOutputTokens: config.maxOutputTokens,
+          maxSearchQueries: config.maxSearchQueries,
           useRerank: config.useRerank,
           searchWideK: config.searchWideK,
           finalK: config.finalK,
@@ -295,9 +313,17 @@ export const adminApiRoute = [
         },
         judge: {
           judgeModel: config.judgeModel,
+          temperature: config.judgeTemperature,
+          maxCompletionTokens: config.judgeMaxCompletionTokens,
           evalWideK: config.evalWideK,
+          evalWideSearch: config.evalWideSearch,
         },
         collections: allowedCollections,
+        requestBudget: {
+          pipeline: pipelineRequestBudget,
+          judge: run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0,
+          total: pipelineRequestBudget + (run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0),
+        },
       };
 
       const chunkView = (ch: RagChunk) => ({ name: ch.name, score: ch.score, content: ch.content });
@@ -321,13 +347,27 @@ export const adminApiRoute = [
       // Notation SYNCHRONE (banc de test) : on ATTEND les notes du juge pour les afficher,
       // contrairement au chat live (fire-and-forget). Le résultat est aussi persisté (source 'test').
       let scoreResult: { scores: any[]; isRefusal: boolean; runId: number | null; used: RagChunk[]; wide: RagChunk[] };
-      try {
+      if (!withJudge) {
+        // Le banc peut aussi constituer un log non noté, à reprendre ensuite
+        // manuellement depuis la page Évaluation.
+        const runId = await db.insertRagRun({
+          source: 'test',
+          question: query,
+          answer: run.answer,
+          usedChunks: run.chunks,
+          wideK: 0,
+          genModel: config.llmModel,
+          isRefusal: isRefusal(run.answer),
+        });
+        scoreResult = { scores: [], isRefusal: isRefusal(run.answer), runId, used: run.chunks, wide: [] };
+      } else try {
         scoreResult = await scoreRun({
           question: query,
           answer: run.answer,
           usedChunks: run.chunks,
           source: 'test',
           genModel: config.llmModel,
+          allowedCollections,
         });
       } catch (err: any) {
         scoreResult = { scores: [{ metric: 'erreur', score: 0, reason: String(err?.message || err) }], isRefusal: false, runId: null, used: run.chunks, wide: [] };
@@ -376,23 +416,39 @@ export const adminApiRoute = [
       const body = await c.req.json();
       const ip = getClientIp(c);
       const allowed = [
-        'albertApiKey', 'albertApiBaseUrl', 'llmModel',
-        'defaultCollections', 'searchK', 'minScore',
+        'albertApiKey', 'albertApiBaseUrl', 'albertMaxRpm', 'llmModel',
+        'defaultCollections', 'maxSearchQueries', 'searchK', 'minScore',
         'useRerank', 'ragPromptTemplate', 'adminContactEmail',
         'judgeModel', 'evalSamplingRate',
         // Leviers de précision du pipeline RAG + éval.
-        'temperature', 'searchWideK', 'finalK', 'rerankMinScore', 'evalWideK',
+        'temperature', 'topP', 'maxOutputTokens', 'judgeTemperature', 'judgeMaxCompletionTokens',
+        'searchWideK', 'finalK', 'rerankMinScore', 'evalWideK', 'evalWideSearch',
       ];
       const updates: Record<string, any> = {};
       for (const key of allowed) {
         if (body[key] !== undefined) updates[key] = body[key];
       }
 
+      if (updates.judgeModel !== undefined || updates.llmModel !== undefined) {
+        const current = await getConfig();
+        const generationModel = String(updates.llmModel ?? current.llmModel);
+        const judgeModel = String(updates.judgeModel ?? current.judgeModel);
+        if (generationModel && judgeModel && generationModel === judgeModel) {
+          return c.json({ error: 'Le modèle juge doit être différent du modèle de génération.' }, 400);
+        }
+      }
+
       // Validation des paramètres numériques (bornes + type) avant persistance.
       // [key, min, max, entier?]
       const numericBounds: Array<[string, number, number, boolean]> = [
         ['evalSamplingRate', 0, 1, false],
+        ['albertMaxRpm', 1, 100, true],
         ['temperature', 0, 2, false],
+        ['topP', 0, 1, false],
+        ['maxOutputTokens', 256, 4096, true],
+        ['judgeTemperature', 0, 1, false],
+        ['judgeMaxCompletionTokens', 128, 2048, true],
+        ['maxSearchQueries', 1, 4, true],
         ['rerankMinScore', 0, 1, false],
         ['searchWideK', 1, 100, true],
         ['finalK', 1, 50, true],
@@ -412,6 +468,7 @@ export const adminApiRoute = [
       }
 
       await updateConfig(updates);
+      if (updates.albertMaxRpm !== undefined) configureAlbertRateLimit(updates.albertMaxRpm);
       await db.logAudit(ip, 'CONFIG_UPDATED', authResult.user.id, `Fields: ${Object.keys(updates).join(', ')}`);
 
       return c.json({ ok: true });
@@ -430,13 +487,13 @@ export const adminApiRoute = [
       try {
         const models = await albert.listModels();
         albertStatus = 'connected';
-        // N'expose QUE les modèles capables de chat (génération + juge) : on écarte
-        // embeddings, rerank, audio et OCR (types non conversationnels). On préfère
-        // l'alias `openweight-*` — cohérent avec les défauts et stable entre versions.
+        // N'expose QUE les modèles `text-generation` : l'API Chat Completions Albert
+        // refuse les modèles embeddings/rerank/audio/OCR et le catalogue actuel classe
+        // certains anciens modèles conversationnels en `image-text-to-text`.
         albertModels = (models.data || [])
           .filter((m: any) => {
             const type = String(m.type || '');
-            if (type !== 'text-generation' && type !== 'image-text-to-text') return false;
+            if (type !== 'text-generation') return false;
             const tokens = [m.id, ...(m.aliases || [])].join(' ').toLowerCase();
             return !/ocr|whisper|audio|embed|rerank/.test(tokens);
           })

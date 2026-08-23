@@ -156,11 +156,24 @@ export async function chatCompletions(data: {
   model: string;
   messages: Array<{ role: string; content: string }>;
   temperature?: number;
+  topP?: number;
+  max_completion_tokens?: number;
+  n?: number;
+  response_format?: { type: 'json_object' | 'text' };
   stream?: boolean;
 }) {
   const res = await albertFetch('/v1/chat/completions', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      model: data.model,
+      messages: data.messages,
+      temperature: data.temperature,
+      top_p: data.topP,
+      max_completion_tokens: data.max_completion_tokens,
+      n: data.n,
+      response_format: data.response_format,
+      stream: data.stream,
+    }),
   });
   return res;
 }
