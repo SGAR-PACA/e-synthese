@@ -477,7 +477,7 @@ export async function getAuditLog(limit = 100): Promise<any[]> {
 }
 
 // ---- Évaluation RAG (notation) ----
-export interface RagChunk { name: string; content: string; score: number; url: string; documentId?: string; chunkId?: string }
+export interface RagChunk { name: string; content: string; score: number; url: string; documentId?: string; chunkId?: string; collectionId?: number }
 
 export interface RagRunInput {
   source: 'live' | 'on-demand' | 'test';
@@ -693,19 +693,24 @@ export async function getDocumentFileByAlbertId(
   return rows[0];
 }
 
-// Résout un document par son NOM de fichier. Nécessaire car Albert expose DEUX
+// Résout les documents par leur NOM de fichier. Nécessaire car Albert expose DEUX
 // espaces d'ID : celui de la recherche (chunk.document_id) diffère de celui de
 // l'upload (stocké dans albert_document_id). Le nom (document_name des chunks =
-// filename stocké) fait le pont. Homonymes -> le plus récent PRÊT.
-export async function getDocumentFileByFilename(
+// filename stocké) fait le pont.
+//
+// Renvoie TOUTES les copies `ready` de ce nom (un même fichier peut vivre dans
+// plusieurs collections : doublons inter-groupes / copies legacy). Le choix de
+// l'exemplaire à citer — cloisonné aux collections autorisées — est délégué à
+// `pickDocumentFile` (lib/source-resolve.ts), pour éviter qu'un lien pointe vers
+// un homonyme d'une collection que l'utilisateur ne peut pas voir (→ refus 403).
+export async function getDocumentFilesByFilename(
   filename: string,
-): Promise<DocumentFile | undefined> {
-  const rows = await query<DocumentFile>(
+): Promise<DocumentFile[]> {
+  return query<DocumentFile>(
     `SELECT * FROM document_files WHERE filename = $1 AND status = 'ready'
-     ORDER BY created_at DESC LIMIT 1`,
+     ORDER BY created_at DESC`,
     [filename],
   );
-  return rows[0];
 }
 
 // Supprime la ligne et retourne l'ancienne valeur (pour effacer la clé S3 associée).

@@ -18,4 +18,13 @@ test('normalizeHit : ids absents -> undefined', () => {
   const out = normalizeHit({ score: 0.5, chunk: { content: 'x', metadata: {} } });
   assert.equal(out.documentId, undefined);
   assert.equal(out.chunkId, undefined);
+  assert.equal(out.collectionId, undefined);
+});
+
+test('normalizeHit : capture collection_id (cloisonnement) et le typpe en nombre', () => {
+  const out = normalizeHit({
+    score: 0.9,
+    chunk: { content: 't', document_id: 'd', metadata: { document_name: 'A.pdf', collection_id: '270076' } },
+  });
+  assert.equal(out.collectionId, 270076);
 });
