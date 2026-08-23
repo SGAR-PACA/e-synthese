@@ -592,6 +592,18 @@ export interface RagRunInput {
   isRefusal: boolean;
 }
 
+export interface RagRunRecord {
+  id: number;
+  created_at: string;
+  source: 'live' | 'on-demand' | 'test';
+  question: string;
+  answer: string;
+  used_chunks: RagChunk[];
+  wide_k: number;
+  gen_model: string | null;
+  is_refusal: boolean;
+}
+
 export interface RagScoreInput {
   metric: string;
   score: number;
@@ -606,6 +618,7 @@ export interface ScoreFilters {
   minScore?: number;
   maxScore?: number;
   source?: string;
+  scored?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -617,6 +630,32 @@ export async function insertRagRun(r: RagRunInput): Promise<number> {
     [r.source, r.question, r.answer, JSON.stringify(r.usedChunks), r.wideK, r.genModel, r.isRefusal],
   );
   return rows[0].id;
+}
+
+export async function getRagRunById(id: number): Promise<RagRunRecord | null> {
+  const rows = await query<RagRunRecord>(
+    `SELECT id, created_at, source, question, answer, used_chunks, wide_k, gen_model, is_refusal
+       FROM rag_runs WHERE id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    used_chunks: Array.isArray(row.used_chunks) ? row.used_chunks : [],
+  };
+}
+
+export async function hasRagScores(runId: number): Promise<boolean> {
+  const rows = await query<{ has_scores: boolean }>(
+    'SELECT EXISTS (SELECT 1 FROM rag_scores WHERE run_id = $1) AS has_scores',
+    [runId],
+  );
+  return Boolean(rows[0]?.has_scores);
+}
+
+export async function updateRagRunWideK(runId: number, wideK: number): Promise<void> {
+  await run('UPDATE rag_runs SET wide_k = $2 WHERE id = $1', [runId, wideK]);
 }
 
 export async function insertRagScores(runId: number, scores: RagScoreInput[]): Promise<void> {
@@ -640,8 +679,10 @@ export async function getScoreAverages(f: ScoreFilters): Promise<Record<string, 
         AND ($4::text  IS NULL OR s.metric   = $4)
         AND ($5::float IS NULL OR s.score   >= $5)
         AND ($6::float IS NULL OR s.score   <= $6)
+        AND ($7::boolean IS NULL OR (($7 = true AND EXISTS (SELECT 1 FROM rag_scores sx WHERE sx.run_id = r.id))
+                                  OR ($7 = false AND NOT EXISTS (SELECT 1 FROM rag_scores sx WHERE sx.run_id = r.id))))
       GROUP BY s.metric`,
-    [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null],
+    [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null, f.scored ?? null],
   );
   const out: Record<string, { avg: number; n: number }> = {};
   for (const row of rows) out[row.metric] = { avg: Math.round(row.avg * 1000) / 1000, n: row.n };
@@ -662,7 +703,7 @@ export interface ScoreItem {
 export async function getScores(f: ScoreFilters): Promise<{ count: number; items: ScoreItem[] }> {
   const limit = f.limit ?? 50;
   const offset = f.offset ?? 0;
-  const filterParams = [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null];
+  const filterParams = [f.source ?? null, f.from ?? null, f.to ?? null, f.metric ?? null, f.minScore ?? null, f.maxScore ?? null, f.scored ?? null];
 
   const whereRuns =
     `($1::text  IS NULL OR r.source   = $1)
@@ -672,7 +713,9 @@ export async function getScores(f: ScoreFilters): Promise<{ count: number; items
            OR EXISTS (SELECT 1 FROM rag_scores s WHERE s.run_id = r.id
                         AND ($4::text  IS NULL OR s.metric = $4)
                         AND ($5::float IS NULL OR s.score >= $5)
-                        AND ($6::float IS NULL OR s.score <= $6)) )`;
+                        AND ($6::float IS NULL OR s.score <= $6)) )
+     AND ($7::boolean IS NULL OR (($7 = true AND EXISTS (SELECT 1 FROM rag_scores sx WHERE sx.run_id = r.id))
+                               OR ($7 = false AND NOT EXISTS (SELECT 1 FROM rag_scores sx WHERE sx.run_id = r.id))))`;
 
   const countRows = await query<{ count: number }>(
     `SELECT COUNT(*)::int AS count FROM rag_runs r WHERE ${whereRuns}`,
@@ -684,7 +727,7 @@ export async function getScores(f: ScoreFilters): Promise<{ count: number; items
     `SELECT r.id, r.created_at, r.source, r.question, r.answer, r.is_refusal
        FROM rag_runs r WHERE ${whereRuns}
       ORDER BY r.created_at DESC
-      LIMIT $7 OFFSET $8`,
+      LIMIT $8 OFFSET $9`,
     [...filterParams, limit, offset],
   );
 

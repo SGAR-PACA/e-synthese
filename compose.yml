@@ -39,19 +39,37 @@ services:
       - ALBERT_API_BASE_URL=${ALBERT_API_BASE_URL:-https://albert.api.etalab.gouv.fr}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY requis}
       - LLM_MODEL=${LLM_MODEL:-openweight-large}
+      # Top P est désactivé à 1 par défaut ; régler soit top_p, soit la température.
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.2}
+      - LLM_TOP_P=${LLM_TOP_P:-1}
+      - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-2048}
+      # Paramètres RAG ; les valeurs déjà enregistrées dans la config DB restent prioritaires.
+      - MAX_SEARCH_QUERIES=${MAX_SEARCH_QUERIES:-2}
+      - SEARCH_K=${SEARCH_K:-5}
+      - MIN_SCORE=${MIN_SCORE:-0.5}
+      - SEARCH_WIDE_K=${SEARCH_WIDE_K:-20}
+      - FINAL_K=${FINAL_K:-8}
+      - RERANK_MIN_SCORE=${RERANK_MIN_SCORE:-0.2}
+      - USE_RERANK=${USE_RERANK:-true}
       # Modèle du LLM-juge (notation). DOIT être différent de LLM_MODEL (sinon biais
-      # d'auto-préférence). Défaut : openweight-medium (Mistral Small 24B). Pilotable aussi
+      # d'auto-préférence). Défaut : deepseek-v4-flash. Pilotable aussi
       # depuis l'admin (« Notation » → Modèle juge), qui l'emporte sur cette valeur.
-      - ALBERT_JUDGE_MODEL=${ALBERT_JUDGE_MODEL:-openweight-medium}
+      - ALBERT_JUDGE_MODEL=${ALBERT_JUDGE_MODEL:-deepseek-v4-flash}
+      - JUDGE_TEMPERATURE=${JUDGE_TEMPERATURE:-0}
+      - JUDGE_MAX_COMPLETION_TOKENS=${JUDGE_MAX_COMPLETION_TOKENS:-512}
       # Taux d'échantillonnage de la notation LIVE (0 = désactivé, 1 = 100 %). La clé Albert
       # (~10 req/min) est PARTAGÉE par tous les users ; désormais la notation ne fait qu'1 appel
       # juge/réponse (fusionné) et passe en priorité basse derrière le chat (limiteur global),
       # mais garder ce taux bas reste prudent. Pilotable aussi depuis l'admin.
-      - EVAL_SAMPLING_RATE=${EVAL_SAMPLING_RATE:-0.3}
+      - EVAL_SAMPLING_RATE=${EVAL_SAMPLING_RATE:-0.1}
+      # Recherche large additionnelle du judge : coûte un appel Albert par notation.
+      - EVAL_WIDE_SEARCH=${EVAL_WIDE_SEARCH:-false}
+      - EVAL_WIDE_K=${EVAL_WIDE_K:-20}
       # Plafond de requêtes Albert par minute imposé par le limiteur global (marge sous le
-      # quota dur de la clé). Régler sur le quota RÉEL de la clé (accès partenaire = plus haut).
+      # quota dur de la clé). 8 laisse une marge sous le quota public habituel de 10 ;
+      # régler sur le quota RÉEL de la clé (accès partenaire = plus haut).
       # ⚠️ Une seule replica mastra : ce compteur est par-process.
-      - ALBERT_MAX_RPM=${ALBERT_MAX_RPM:-9}
+      - ALBERT_MAX_RPM=${ALBERT_MAX_RPM:-8}
       - PORT=4111
       - DATABASE_URL=postgresql://mastra:${MASTRA_DB_PASSWORD:?MASTRA_DB_PASSWORD requis}@mastra_postgresql:5432/mastra
       # --- Visionneuse de sources (phase Ingestion) ---

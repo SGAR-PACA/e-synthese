@@ -11,10 +11,10 @@
   <main>
     <h2>Évaluation des réponses (Mastra)</h2>
     <p>
-      Notation automatique par LLM-juge (<strong>gpt-oss-120b</strong>) des réponses passées par
-      <code>/v1/chat/completions</code> (échantillonné), <code>/v1/score</code>, et la page
-      <strong>Test Pipeline</strong> (source <code>test</code>). Le test apparaît ici ~30&nbsp;s après l'envoi
-      (le temps que les 4 juges tournent en arrière-plan).
+      Les réponses RAG sont journalisées même sans notation automatique. Le LLM-juge
+      (<strong>deepseek-v4-flash</strong> par défaut) peut les noter automatiquement sur un échantillon,
+      ou être lancé manuellement sur une réponse historique avec le bouton <strong>Juger</strong>.
+      Une notation manuelle consomme un appel Albert.
     </p>
     <div id="msg" class="message"></div>
 
@@ -36,6 +36,13 @@
           <option value="retrieval_quality">Qualité retrieval</option>
         </select>
       </label>
+      <label>Statut
+        <select id="f-scored">
+          <option value="">Toutes</option>
+          <option value="false">Sans judge</option>
+          <option value="true">Déjà notées</option>
+        </select>
+      </label>
       <label>Score min
         <input id="f-min" type="number" min="0" max="1" step="0.1" placeholder="0 – 1">
       </label>
@@ -45,7 +52,7 @@
     <h3>Moyennes par métrique</h3>
     <div id="averages" class="avg-grid"></div>
 
-    <h3>Réponses notées (<span id="count">0</span>)</h3>
+    <h3>Logs / réponses (<span id="count">0</span>)</h3>
     <div class="table-wrap">
       <table role="grid">
         <thead>
@@ -57,6 +64,7 @@
             <th scope="col">Fidélité</th>
             <th scope="col">Complét.</th>
             <th scope="col">Retrieval</th>
+            <th scope="col">Action</th>
             <th scope="col"><span class="sr-only">Détail</span></th>
           </tr>
         </thead>
@@ -95,6 +103,7 @@
         createEl('strong', { textContent: 'Réponse : ' }),
         document.createTextNode(item.answer || '(vide)')
       ]));
+      wrap.appendChild(createEl('p', { className: 'reason', textContent: 'Run #' + item.run_id + ' — source : ' + item.source }));
       item.scores.forEach(function (s) {
         wrap.appendChild(createEl('p', { className: 'reason' }, [
           createEl('span', { className: scClass(s.score), textContent: s.score.toFixed(2) }),
@@ -108,9 +117,11 @@
       var qs = ['limit=100'];
       var src = document.getElementById('f-source').value;
       var met = document.getElementById('f-metric').value;
+      var scored = document.getElementById('f-scored').value;
       var min = document.getElementById('f-min').value;
       if (src) qs.push('source=' + encodeURIComponent(src));
       if (met) qs.push('metric=' + encodeURIComponent(met));
+      if (scored) qs.push('scored=' + encodeURIComponent(scored));
       if (min !== '') qs.push('minScore=' + encodeURIComponent(min));
 
       var data = await apiGet('/admin/scores?' + qs.join('&'));
@@ -133,8 +144,8 @@
       clearEl(body);
       if (!data.items.length) {
         body.appendChild(createEl('tr', {}, [createEl('td', {
-          colspan: '8',
-          textContent: 'Aucune réponse notée pour ces filtres. Envoie une question via /v1/chat/completions ou /v1/score.'
+          colspan: '9',
+          textContent: 'Aucun log pour ces filtres. Les nouvelles réponses seront journalisées après le déploiement.'
         })]));
         return;
       }
@@ -144,6 +155,27 @@
         var toggle = createEl('button', {
           className: 'toggle outline', type: 'button', 'aria-expanded': 'false', textContent: 'Détail'
         });
+        var judge = createEl('button', {
+          className: 'outline', type: 'button', textContent: item.scores.length ? 'Déjà noté' : 'Juger'
+        });
+        if (item.scores.length) {
+          judge.disabled = true;
+        } else {
+          judge.addEventListener('click', async function () {
+            if (!window.confirm('Lancer le judge sur cette réponse ? Cela consomme un appel Albert.')) return;
+            judge.disabled = true;
+            judge.textContent = 'Notation…';
+            var result = await apiPost('/admin/scores/' + encodeURIComponent(item.run_id) + '/judge', {});
+            if (!result || result.error) {
+              judge.disabled = false;
+              judge.textContent = 'Juger';
+              showMessage('msg', result && result.error ? result.error : 'Notation manuelle échouée', true);
+              return;
+            }
+            showMessage('msg', 'Réponse notée par le judge.', false);
+            await load();
+          });
+        }
         var tr = createEl('tr', {}, [
           createEl('td', { textContent: new Date(item.created_at).toLocaleString('fr') }),
           createEl('td', { textContent: item.source + (item.is_refusal ? ' (refus)' : '') }),
@@ -152,6 +184,7 @@
           scoreCell(item.scores, 'faithfulness'),
           scoreCell(item.scores, 'completeness'),
           scoreCell(item.scores, 'retrieval_quality'),
+          createEl('td', {}, [judge]),
           createEl('td', {}, [toggle])
         ]);
         body.appendChild(tr);
@@ -163,7 +196,7 @@
             toggle.setAttribute('aria-expanded', 'false');
             return;
           }
-          detailRow = createEl('tr', {}, [createEl('td', { colspan: '8', className: 'detail-cell' }, [buildDetail(item)])]);
+          detailRow = createEl('tr', {}, [createEl('td', { colspan: '9', className: 'detail-cell' }, [buildDetail(item)])]);
           tr.after(detailRow);
           toggle.setAttribute('aria-expanded', 'true');
         });

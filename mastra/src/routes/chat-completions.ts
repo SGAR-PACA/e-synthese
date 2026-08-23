@@ -13,7 +13,7 @@ import { verifyForwardedUserToken } from '../lib/chat-auth.js';
 import { extractGroups, resolveAllowedCollections } from '../lib/collection-scope.js';
 import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
-import { getDocumentFilesByFilename, getDocumentFileByAlbertId } from '../lib/db.js';
+import { getDocumentFilesByFilename, getDocumentFileByAlbertId, insertRagRun } from '../lib/db.js';
 import { pickDocumentFile } from '../lib/source-resolve.js';
 import { injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
@@ -65,10 +65,11 @@ export const chatCompletionsRoute = [
       }
 
       const body = await c.req.json();
-      const { messages = [], stream = false, temperature, max_tokens } = body as {
+      const { messages = [], stream = false, temperature, top_p, max_tokens } = body as {
         messages: OpenAIMessage[];
         stream?: boolean;
         temperature?: number;
+        top_p?: number;
         max_tokens?: number;
       };
 
@@ -90,8 +91,15 @@ export const chatCompletionsRoute = [
         return c.json({ error: 'messages is required and must contain at least one non-placeholder message' }, 400);
       }
 
-      const modelOptions: { temperature?: number; maxOutputTokens?: number } = {};
-      if (temperature !== undefined) modelOptions.temperature = temperature;
+      const modelOptions: { temperature?: number; topP?: number; maxOutputTokens?: number } = {};
+      if (temperature !== undefined) {
+        const parsed = Number(temperature);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2) modelOptions.temperature = parsed;
+      }
+      if (top_p !== undefined) {
+        const parsed = Number(top_p);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) modelOptions.topP = parsed;
+      }
       if (max_tokens !== undefined) {
         const parsed = Number(max_tokens);
         if (Number.isFinite(parsed) && parsed > 0) {
@@ -110,7 +118,12 @@ export const chatCompletionsRoute = [
       // Température : forcée à la valeur basse par défaut si le client n'en fournit pas.
       const writerSettings = {
         temperature: modelOptions.temperature ?? config.temperature,
-        maxOutputTokens: modelOptions.maxOutputTokens,
+        topP: modelOptions.topP ?? (config.topP < 1 ? config.topP : undefined),
+        // Le client peut demander une sortie plus courte, mais jamais dépasser
+        // le plafond choisi par l'administrateur.
+        maxOutputTokens: modelOptions.maxOutputTokens === undefined
+          ? config.maxOutputTokens
+          : Math.min(modelOptions.maxOutputTokens, config.maxOutputTokens),
       };
 
       // ───────────── Mode streaming ─────────────
@@ -121,7 +134,7 @@ export const chatCompletionsRoute = [
 
       // ───────────── Mode non-streaming ─────────────
       // Cœur du pipeline mutualisé avec le banc de test admin (voir pipeline/orchestrate.ts).
-      const run = await runRagCore({ question, planner, writer, writerSettings, allowedCollections });
+      const run = await runRagCore({ question, planner, writer, writerSettings, allowedCollections, config });
 
       // Cas direct (salutation / conversationnel) : réponse immédiate, pas de recherche, pas de notation.
       if (run.plan.type === 'direct') {
@@ -131,8 +144,10 @@ export const chatCompletionsRoute = [
       const chunks = run.chunks;
       await remapDocumentIds(chunks, allowedCollections);
       const clean = run.answer; // déjà nettoyée des marqueurs 【】 par runRagCore.
+      // Journalisation séparée de la notation : même avec evalSamplingRate=0, le
+      // run reste disponible dans Mastra Admin pour un jugement manuel ultérieur.
       // Notation : sur la version SANS liens (format Sources préservé pour le scorer).
-      maybeScoreLive(question, chunks, clean, config, model);
+      await logLiveRunAndMaybeScore(question, chunks, clean, config, model, allowedCollections);
       const sign = sourceSigner();
       // Pas de bloc Sources si la réponse n'est pas fondée sur des documents (rien trouvé / refus).
       const display = shouldSuppressSources(clean, chunks) ? stripSourcesBlock(clean) : clean;
@@ -259,19 +274,56 @@ function lastUserText(messages: OpenAIMessage[]): string {
 
 // Notation LIVE : échantillonnée, détachée, JAMAIS bloquante ni propagatrice d'erreur.
 // Reçoit directement les chunks utilisés (le pipeline déterministe les connaît).
-function maybeScoreLive(question: string, usedChunks: RagChunk[], answer: string, config: AppConfig, genModel: string): void {
+function maybeScoreLive(
+  question: string,
+  usedChunks: RagChunk[],
+  answer: string,
+  config: AppConfig,
+  genModel: string,
+  allowedCollections: number[] | null,
+  runId: number,
+): void {
   if (Math.random() >= (config.evalSamplingRate ?? 0)) return;
   const cleanAnswer = stripCitationBrackets(answer);
   if (!question || !cleanAnswer) return;
-  void scoreRun({ question, answer: cleanAnswer, usedChunks, source: 'live', genModel })
+  void scoreRun({ runId, question, answer: cleanAnswer, usedChunks, source: 'live', genModel, allowedCollections })
     .catch((err) => console.error('[eval] scoring live échoué:', err?.message || err));
+}
+
+// Tous les runs documentaires sont journalisés, indépendamment du judge live.
+// La notation reste optionnelle et peut être lancée plus tard depuis /admin/eval.
+async function logLiveRunAndMaybeScore(
+  question: string,
+  usedChunks: RagChunk[],
+  answer: string,
+  config: AppConfig,
+  genModel: string,
+  allowedCollections: number[] | null,
+): Promise<void> {
+  const cleanAnswer = stripCitationBrackets(answer);
+  if (!question || !cleanAnswer) return;
+  try {
+    const runId = await insertRagRun({
+      source: 'live',
+      question,
+      answer: cleanAnswer,
+      usedChunks,
+      wideK: 0,
+      genModel,
+      isRefusal: isRefusal(cleanAnswer),
+    });
+    maybeScoreLive(question, usedChunks, cleanAnswer, config, genModel, allowedCollections, runId);
+  } catch (err: any) {
+    // Une panne de la base d'évaluation ne doit jamais faire échouer le chat.
+    console.error('[eval] journalisation live échouée:', err?.message || err);
+  }
 }
 
 interface PipelineSSEArgs {
   question: string;
   planner: any;
   writer: any;
-  writerSettings: { temperature: number; maxOutputTokens?: number };
+  writerSettings: { temperature: number; topP?: number; maxOutputTokens?: number };
   config: AppConfig;
   model: string;
   allowedCollections: number[] | null;
@@ -302,7 +354,7 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         send(controller, { role: 'assistant' });
 
         etape(controller, 'Analyse de la question…');
-        const plan = await planifier(question, planner);
+        const plan = await planifier(question, planner, config.maxSearchQueries);
 
         // Cas direct : réponse immédiate, pas de recherche.
         if (plan.type === 'direct') {
@@ -313,7 +365,7 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         }
 
         etape(controller, 'Recherche dans les documents…');
-        const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections);
+        const { chunks } = await rechercherMultiple(plan.requetes, question, allowedCollections, config);
         await remapDocumentIds(chunks, allowedCollections);
 
         etape(controller, 'Rédaction de la réponse…');
@@ -344,8 +396,9 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         send(controller, {}, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 
-        // Notation live sur le texte complet NON lié (format Sources préservé).
-        maybeScoreLive(question, chunks, fullText, config, model);
+        // Journalisation + notation live sur le texte complet NON lié (format Sources préservé).
+        // Elle est détachée après l'envoi de [DONE] pour ne pas ralentir le streaming.
+        void logLiveRunAndMaybeScore(question, chunks, fullText, config, model, allowedCollections);
       } catch (err: any) {
         send(controller, { content: `[error: ${err?.message || 'stream failed'}]` }, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));

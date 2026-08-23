@@ -1,5 +1,6 @@
 import * as albert from '../../lib/albert-client.js';
 import { getConfig } from '../../lib/config.js';
+import type { AppConfig } from '../../lib/config.js';
 import { getAllCollectionIds } from '../../lib/collections-cache.js';
 import type { RagChunk } from '../../lib/db.js';
 
@@ -60,9 +61,10 @@ export interface ResultatRecherche {
 }
 
 // Lance N recherches en parallèle, fusionne, déduplique, rerank contre la
-// question d'origine, applique le seuil, garde les finalK meilleurs.
+// question d'origine si activé, applique le seuil, garde les finalK meilleurs.
 // Choix A (validé) : AUCUN filtre minScore au search — le k borne déjà à
-// searchWideK résultats par requête ; le rerank est le seul filtre de qualité.
+// searchWideK résultats par requête ; le rerank est le filtre de qualité quand
+// il est activé, sinon le score de recherche et minScore prennent le relais.
 // Périmètre de recherche (Chantier 2) :
 //  - `allowedCollections` = tableau → collections EXPLICITEMENT autorisées pour
 //    l'utilisateur (autorité ; tableau vide → aucun résultat, défaut sûr).
@@ -73,8 +75,11 @@ export async function rechercherMultiple(
   requetes: string[],
   questionOrigine: string,
   allowedCollections?: number[] | null,
+  configOverride?: AppConfig,
 ): Promise<ResultatRecherche> {
-  const config = await getConfig();
+  // Le banc de test fournit un snapshot pour que tous les appels d'une exécution
+  // utilisent exactement les paramètres affichés dans l'admin.
+  const config = configOverride ?? await getConfig();
   const collections = allowedCollections == null ? await getAllCollectionIds() : allowedCollections;
   if (!collections.length || requetes.length === 0) return { chunks: [], vide: true };
 
@@ -96,22 +101,28 @@ export async function rechercherMultiple(
   const fusionnes = fusionnerEtDedupliquer(paquets);
   if (fusionnes.length === 0) return { chunks: [], vide: true };
 
-  // C. Rerank contre la question d'origine (repli : tri par score de recherche).
+  // C. Rerank contre la question d'origine (optionnel : le désactiver économise
+  // un appel Albert par réponse et replie sur le score de recherche).
   let classes = fusionnes;
-  try {
-    const rr = await albert.rerank({ query: questionOrigine, documents: fusionnes.map((c) => c.content) });
-    if (rr.results) {
-      classes = rr.results
-        .sort((a: any, b: any) => b.relevance_score - a.relevance_score)
-        .map((r: any) => ({ ...fusionnes[r.index], score: r.relevance_score }));
+  if (config.useRerank) {
+    try {
+      const rr = await albert.rerank({ query: questionOrigine, documents: fusionnes.map((c) => c.content) });
+      if (rr.results) {
+        classes = rr.results
+          .sort((a: any, b: any) => b.relevance_score - a.relevance_score)
+          .map((r: any) => ({ ...fusionnes[r.index], score: r.relevance_score }));
+      }
+    } catch (err) {
+      console.error('[retrieval] rerank indisponible, repli tri par score', err);
+      classes = [...fusionnes].sort((a, b) => b.score - a.score);
     }
-  } catch (err) {
-    console.error('[retrieval] rerank indisponible, repli tri par score', err);
+  } else {
     classes = [...fusionnes].sort((a, b) => b.score - a.score);
   }
 
   // D. Seuil + resserrage.
   const meilleur = classes[0]?.score ?? 0;
-  if (meilleur < config.rerankMinScore) return { chunks: [], vide: true };
+  const minScore = config.useRerank ? config.rerankMinScore : config.minScore;
+  if (meilleur < minScore) return { chunks: [], vide: true };
   return { chunks: classes.slice(0, config.finalK), vide: false };
 }

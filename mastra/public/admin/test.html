@@ -10,10 +10,22 @@
   <nav id="main-nav"></nav>
   <h2>Banc de test RAG</h2>
   <div id="msg" class="message"></div>
-  <p>Exécute le <strong>pipeline complet identique au chat de production</strong> (planification → pêche large → rerank → rédaction) puis la <strong>notation IA-juge</strong>. Affiche les paramètres appliqués, les passages récupérés, la réponse et les notes — pour régler finement et juger la pertinence d'une question.</p>
+  <p>Exécute le <strong>pipeline complet identique au chat de production</strong> (planification → recherche → rerank → rédaction) puis, au choix, la <strong>notation IA-juge</strong>. Affiche les paramètres appliqués, les passages récupérés, la réponse et les notes — pour régler finement sans multiplier les appels Albert.</p>
+  <details open>
+    <summary><strong>Processus recommandé</strong></summary>
+    <ol>
+      <li>Teste d'abord plusieurs questions avec le judge désactivé : cela consomme uniquement le pipeline.</li>
+      <li>Compare une seule famille de paramètres à la fois (K/recherche, puis température).</li>
+      <li>Garde le journal JSON de chaque configuration et vérifie les réponses avec tes critères métier.</li>
+      <li>Active ensuite le judge et la recherche élargie uniquement sur les questions représentatives.</li>
+    </ol>
+    <small>Le budget d'appels affiché dans le résultat inclut le planificateur, les recherches, le rerank, le rédacteur et le judge.</small>
+  </details>
   <form id="test-form">
     <label for="query">Question de test</label>
     <input type="text" id="query" required placeholder="Ex: Quels documents faut-il pour renouveler une carte d'identité ?">
+    <label><input type="checkbox" id="withJudge"> Exécuter le judge (coûte au moins 1 appel Albert supplémentaire)</label>
+    <small>Désactivé par défaut pour régler le pipeline sans consommer l'appel du juge. Active-le pour mesurer la qualité de la réponse.</small>
     <button type="submit" id="test-btn">Lancer le test</button>
   </form>
   <div id="results" style="margin-top:1.5rem;"></div>
@@ -174,10 +186,11 @@
       var btn = document.getElementById('test-btn');
       var container = document.getElementById('results');
       btn.disabled = true;
-      btn.textContent = 'Test en cours (pipeline + juge)…';
+      var withJudge = document.getElementById('withJudge').checked;
+      btn.textContent = withJudge ? 'Test en cours (pipeline + juge)…' : 'Test en cours (pipeline)…';
       clearEl(container);
-      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: 'Exécution du pipeline et notation…' }));
-      var result = await apiPost('/admin/test-pipeline', { query: query });
+      container.appendChild(createEl('p', { 'aria-busy': 'true', textContent: withJudge ? 'Exécution du pipeline et notation…' : 'Exécution du pipeline sans judge…' }));
+      var result = await apiPost('/admin/test-pipeline', { query: query, withJudge: withJudge });
       btn.disabled = false;
       btn.textContent = 'Lancer le test';
       if (!result || result.error) {

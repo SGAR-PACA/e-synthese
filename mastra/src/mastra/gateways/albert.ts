@@ -24,10 +24,8 @@ export class AlbertGateway extends MastraModelGateway {
         name: 'Albert API',
         models: [
           'openweight-large',
-          'openweight-medium',
-          'openweight-small',
           'openweight-code',
-          'bge-m3',
+          'deepseek-v4-flash',
         ],
         apiKeyEnvVar: 'ALBERT_API_KEY',
         gateway: this.id,

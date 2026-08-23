@@ -1,8 +1,8 @@
 // Notation RAG « LLM-as-judge » — version FUSIONNÉE (un seul appel juge par réponse).
 //
 // Avant : 4 appels LLM séparés (system_prompt, faithfulness, completeness, retrieval_quality).
-// Maintenant : UN prompt demande les 4 notes d'un coup en un JSON unique → 4 requêtes Albert
-// → 1 (−75 %). Sur un refus, seule la conformité au prompt système est demandée (les autres
+// Maintenant : UN prompt demande les 4 notes d'un coup en un JSON unique → 1 requête Albert
+// (−75 %). Sur un refus, seule la conformité au prompt système est demandée (les autres
 // dimensions pénaliseraient injustement l'absence de source voulue). Voir scorers/refusal.ts.
 //
 // Ce module ne contient QUE des fonctions PURES (construction du prompt + parsing/validation),
@@ -78,10 +78,16 @@ export function buildMergedJudgePrompt(input: ScorerInput, refusal: boolean): st
       'CRITÈRE "completeness" — Note 1 si la réponse exploite TOUTE l\'information utile PRÉSENTE ' +
         'DANS LES CHUNKS utilisés ; baisse si elle omet des éléments importants qui y figuraient. ' +
         "N'évalue pas ce qui n'est pas dans les chunks.",
-      `\nVIVIER ÉLARGI (recherche large, chunks candidats non forcément utilisés) :\n${joinCtx(input.wideContexts)}\n`,
-      'CRITÈRE "retrieval_quality" — Note 1 si le vivier élargi ne contient PAS d\'information ' +
-        'importante absente de la réponse ; baisse si des chunks clés du vivier (non exploités) ' +
-        "auraient dû enrichir la réponse (mauvais chunking ou rerank ayant écarté un chunk pertinent).",
+      input.wideContexts.length
+        ? `\nVIVIER ÉLARGI (recherche large, chunks candidats non forcément utilisés) :\n${joinCtx(input.wideContexts)}\n`
+        : '\nVIVIER ÉLARGI : non chargé pour économiser un appel Albert ; seuls les chunks utilisés sont disponibles.\n',
+      input.wideContexts.length
+        ? 'CRITÈRE "retrieval_quality" — Note 1 si le vivier élargi ne contient PAS d\'information ' +
+          'importante absente de la réponse ; baisse si des chunks clés du vivier (non exploités) ' +
+          "auraient dû enrichir la réponse (mauvais chunking ou rerank ayant écarté un chunk pertinent)."
+        : 'CRITÈRE "retrieval_quality" — La recherche élargie n\'ayant pas été exécutée, évalue uniquement ' +
+          'si les chunks utilisés semblent pertinents et suffisants pour répondre ; indique brièvement que ' +
+          'la note ne mesure pas les chunks non récupérés.',
     );
   }
 

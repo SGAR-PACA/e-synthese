@@ -18,6 +18,9 @@
       <small>Laissez vide pour garder la clé actuelle. Clé actuelle : <code id="current-key">...</code></small>
       <label for="albertApiBaseUrl">URL de base Albert API</label>
       <input type="url" id="albertApiBaseUrl" placeholder="https://albert.api.etalab.gouv.fr">
+      <label for="albertMaxRpm">Plafond Albert (requêtes/minute)</label>
+      <input type="number" id="albertMaxRpm" min="1" max="100" step="1" value="8">
+      <small>Limiteur local partagé par le chat, la recherche, le rerank et le judge. Avec une clé à 10 req/min, <strong>8</strong> laisse une marge.</small>
     </fieldset>
     <fieldset>
       <legend>Modèle LLM</legend>
@@ -28,9 +31,14 @@
       <legend>Paramètres RAG</legend>
       <div class="grid">
         <div>
+          <label for="maxSearchQueries">Sous-requêtes maximum</label>
+          <input type="number" id="maxSearchQueries" min="1" max="4" value="2">
+          <small>Chaque sous-requête coûte un appel Albert. <strong>2</strong> est le réglage équilibré.</small>
+        </div>
+        <div>
           <label for="searchK">Nombre de resultats (K)</label>
           <input type="number" id="searchK" min="1" max="50" value="5">
-          <small>Passages demandés par requête de recherche.</small>
+          <small>K de secours utilisé si le judge doit refaire une recherche.</small>
         </div>
         <div>
           <label for="minScore">Score minimum</label>
@@ -61,18 +69,39 @@
           <input type="number" id="temperature" min="0" max="2" step="0.05" value="0.2">
           <small>Bas = factuel/déterministe (recommandé), haut = créatif.</small>
         </div>
+        <div>
+          <label for="topP">Top P (génération)</label>
+          <input type="number" id="topP" min="0" max="1" step="0.05" value="1">
+          <small><code>1</code> = désactivé. Albert recommande de régler soit la température, soit Top P, pas les deux.</small>
+        </div>
+        <div>
+          <label for="maxOutputTokens">Longueur maximum (tokens)</label>
+          <input type="number" id="maxOutputTokens" min="256" max="4096" step="128" value="2048">
+          <small>Plafond de sortie du rédacteur. <strong>2048</strong> est le compromis recommandé.</small>
+        </div>
       </div>
       <label><input type="checkbox" id="useRerank" role="switch"> Activer le reranking</label>
+      <small>Désactiver économise un appel Albert par réponse, avec un classement reposant uniquement sur le score de recherche.</small>
     </fieldset>
     <fieldset>
       <legend>Notation (IA-juge)</legend>
       <label for="judgeModel">Modèle juge</label>
       <select id="judgeModel"><option value="">Chargement...</option></select>
-      <small>Doit être <strong>différent</strong> du modèle de génération (sinon biais d'auto-préférence). Défaut recommandé : <code>openweight-medium</code> (Mistral Small 24B).</small>
+      <small>Le judge recommandé est <code>deepseek-v4-flash</code> et doit rester différent du modèle de génération.</small>
       <div class="grid">
         <div>
+          <label for="judgeTemperature">Température du judge</label>
+          <input type="number" id="judgeTemperature" min="0" max="1" step="0.05" value="0">
+          <small><strong>0</strong> est recommandé pour des notes reproductibles.</small>
+        </div>
+        <div>
+          <label for="judgeMaxCompletionTokens">Sortie maximum du judge</label>
+          <input type="number" id="judgeMaxCompletionTokens" min="128" max="2048" step="64" value="512">
+          <small><strong>512</strong> suffit normalement aux 4 notes JSON et leurs justifications.</small>
+        </div>
+        <div>
           <label for="evalSamplingRate">Taux d'échantillonnage de l'éval</label>
-          <input type="number" id="evalSamplingRate" min="0" max="1" step="0.05" value="0.3">
+          <input type="number" id="evalSamplingRate" min="0" max="1" step="0.05" value="0.1">
           <small>Part des réponses notées (0 = désactivé, 1 = 100 %). Clé Albert (~10 req/min) <strong>partagée</strong> : garder bas.</small>
         </div>
         <div>
@@ -81,6 +110,8 @@
           <small>Taille du vivier pour le critère « qualité du retrieval » du juge.</small>
         </div>
       </div>
+      <label><input type="checkbox" id="evalWideSearch" role="switch"> Recherche élargie pour le judge</label>
+      <small>Désactivée par défaut pour économiser un appel Albert par notation ; active-la uniquement pour auditer précisément le retrieval.</small>
     </fieldset>
     <fieldset>
       <legend>Prompt système RAG</legend>
@@ -104,17 +135,24 @@
       if (!config) return;
       document.getElementById('current-key').textContent = config.albertApiKey || 'Non configurée';
       document.getElementById('albertApiBaseUrl').value = config.albertApiBaseUrl || '';
+      document.getElementById('albertMaxRpm').value = config.albertMaxRpm;
+      document.getElementById('maxSearchQueries').value = config.maxSearchQueries;
       document.getElementById('searchK').value = config.searchK;
       document.getElementById('minScore').value = config.minScore;
       document.getElementById('searchWideK').value = config.searchWideK;
       document.getElementById('finalK').value = config.finalK;
       document.getElementById('rerankMinScore').value = config.rerankMinScore;
       document.getElementById('temperature').value = config.temperature;
+      document.getElementById('topP').value = config.topP;
+      document.getElementById('maxOutputTokens').value = config.maxOutputTokens;
       document.getElementById('useRerank').checked = config.useRerank;
       document.getElementById('ragPromptTemplate').value = config.ragPromptTemplate || '';
       document.getElementById('adminContactEmail').value = config.adminContactEmail || '';
       document.getElementById('evalSamplingRate').value = config.evalSamplingRate;
       document.getElementById('evalWideK').value = config.evalWideK;
+      document.getElementById('evalWideSearch').checked = config.evalWideSearch;
+      document.getElementById('judgeTemperature').value = config.judgeTemperature;
+      document.getElementById('judgeMaxCompletionTokens').value = config.judgeMaxCompletionTokens;
       var status = await apiGet('/admin/status');
       var models = (status && status.albertModels && status.albertModels.length) ? status.albertModels : null;
       // Peuple un <select> de modèles depuis le catalogue Albert, en gardant la valeur courante.
@@ -143,8 +181,10 @@
       var apiKey = document.getElementById('albertApiKey').value;
       if (apiKey) updates.albertApiKey = apiKey;
       updates.albertApiBaseUrl = document.getElementById('albertApiBaseUrl').value;
+      updates.albertMaxRpm = parseInt(document.getElementById('albertMaxRpm').value, 10);
       updates.llmModel = document.getElementById('llmModel').value;
       updates.judgeModel = document.getElementById('judgeModel').value;
+      updates.maxSearchQueries = parseInt(document.getElementById('maxSearchQueries').value, 10);
       updates.evalSamplingRate = parseFloat(document.getElementById('evalSamplingRate').value);
       updates.evalWideK = parseInt(document.getElementById('evalWideK').value, 10);
       updates.searchK = parseInt(document.getElementById('searchK').value, 10);
@@ -153,7 +193,12 @@
       updates.finalK = parseInt(document.getElementById('finalK').value, 10);
       updates.rerankMinScore = parseFloat(document.getElementById('rerankMinScore').value);
       updates.temperature = parseFloat(document.getElementById('temperature').value);
+      updates.topP = parseFloat(document.getElementById('topP').value);
+      updates.maxOutputTokens = parseInt(document.getElementById('maxOutputTokens').value, 10);
       updates.useRerank = document.getElementById('useRerank').checked;
+      updates.evalWideSearch = document.getElementById('evalWideSearch').checked;
+      updates.judgeTemperature = parseFloat(document.getElementById('judgeTemperature').value);
+      updates.judgeMaxCompletionTokens = parseInt(document.getElementById('judgeMaxCompletionTokens').value, 10);
       updates.ragPromptTemplate = document.getElementById('ragPromptTemplate').value;
       updates.adminContactEmail = document.getElementById('adminContactEmail').value;
       var result = await apiPut('/admin/config', updates);
