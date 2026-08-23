@@ -22,3 +22,11 @@ test('buildAuthUrl : contient les paramètres OIDC', () => {
   assert.equal(u.searchParams.get('code_challenge'), 'CH');
   assert.equal(u.searchParams.get('code_challenge_method'), 'S256');
 });
+
+test('buildAuthUrl : prompt=none est explicite pour le SSO silencieux', () => {
+  const url = buildAuthUrl('https://kc/auth', {
+    clientId: 'mastra-sources', redirectUri: 'https://app/v1/source/callback',
+    state: 'ST', nonce: 'NO', challenge: 'CH', prompt: 'none',
+  });
+  assert.equal(new URL(url).searchParams.get('prompt'), 'none');
+});

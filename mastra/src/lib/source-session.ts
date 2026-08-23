@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export function signCookieValue(payload: object, key: string, context = 'v1'): string {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -22,35 +22,48 @@ export function verifyCookieValue<T = any>(value: string, key: string, context =
   }
 }
 
-const SESSION_TTL_MS = 60 * 60 * 1000; // 1 h
+// La session de la visionneuse n'est plus un JWT/cookie auto-validant : elle est
+// opaque et doit exister dans `source_sessions` côté serveur. Une durée courte
+// force une nouvelle autorisation silencieuse périodique et limite la fenêtre
+// d'un changement de groupe Keycloak non encore reflété dans la session.
+const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
+const MIN_SESSION_TTL_MS = 60 * 1000;
+const MAX_SESSION_TTL_MS = 30 * 60 * 1000;
+
+export function sourceSessionTtlMs(): number {
+  const raw = Number(process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS ?? '900');
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_SESSION_TTL_MS;
+  return Math.max(MIN_SESSION_TTL_MS, Math.min(Math.floor(raw * 1000), MAX_SESSION_TTL_MS));
+}
+
+export function newSourceSessionToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function hashSourceSessionToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function readSourceSessionToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const m = cookieHeader.match(/(?:^|;\s*)src_session=([^;]+)/);
+  const token = m?.[1];
+  // 32 random bytes encoded base64url. Reject malformed/oversized values before
+  // hashing or querying the database.
+  return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
+}
 
 export function makeSourceSessionCookie(
-  sub: string,
-  groups: string[],
-  key: string,
-  ttlMs: number = SESSION_TTL_MS,
+  token: string,
+  ttlMs: number = sourceSessionTtlMs(),
 ): string {
-  const value = signCookieValue({ sub, groups, exp: Date.now() + ttlMs }, key, 'session');
   const secure = process.env.NODE_ENV === 'production' ? ' Secure;' : '';
-  return `src_session=${value}; HttpOnly; SameSite=Lax;${secure} Max-Age=${Math.floor(ttlMs / 1000)}; Path=/v1/source`;
+  return `src_session=${token}; HttpOnly; SameSite=Lax;${secure} Max-Age=${Math.floor(ttlMs / 1000)}; Path=/v1/source`;
 }
 
 export function clearSourceSessionCookie(): string {
-  return 'src_session=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/v1/source';
-}
-
-export function readSourceSession(
-  cookieHeader: string | undefined,
-  key: string,
-  now: number,
-): { sub: string; groups: string[] } | null {
-  if (!cookieHeader) return null;
-  const m = cookieHeader.match(/src_session=([^;]+)/);
-  if (!m) return null;
-  const payload = verifyCookieValue<{ sub: string; groups?: unknown; exp: number }>(m[1], key, 'session');
-  if (!payload || typeof payload.exp !== 'number' || payload.exp < now) return null;
-  const groups = Array.isArray(payload.groups) ? payload.groups.filter((g): g is string => typeof g === 'string') : [];
-  return { sub: payload.sub, groups };
+  const secure = process.env.NODE_ENV === 'production' ? ' Secure;' : '';
+  return `src_session=; HttpOnly; SameSite=Lax;${secure} Max-Age=0; Path=/v1/source`;
 }
 
 // Anti open-redirect : seul un chemin interne /v1/source/... est accepté.
