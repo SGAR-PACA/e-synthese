@@ -1,7 +1,19 @@
 // mastra/src/lib/oidc.ts
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { buildAuthUrl, pkceChallenge, randomUrlToken } from './oidc-pkce.js';
 import { extractGroups } from './collection-scope.js';
+
+// Fusionne les groupes/rôles de l'id_token ET (si présent) de l'access_token. PURE.
+// Pourquoi : Keycloak ne met pas forcément `realm_access.roles` dans l'id_token
+// (mapper « Add to ID token » absent sur le client), MAIS l'access_token les porte
+// par défaut. La visionneuse lisait le seul id_token → groupes vides → 403 même sur
+// une collection autorisée. L'union garantit qu'elle voit les mêmes rôles que le chat
+// (qui, lui, s'appuie sur l'access_token).
+export function mergeTokenGroups(idPayload: JWTPayload, accessPayload?: JWTPayload | null): string[] {
+  const fromId = extractGroups(idPayload);
+  if (!accessPayload) return fromId;
+  return [...new Set([...fromId, ...extractGroups(accessPayload)])];
+}
 
 interface OidcConfig {
   issuerPublic: string;   // iss attendu (URL publique Keycloak)
@@ -67,7 +79,7 @@ export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: st
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`token endpoint status ${res.status}`);
-  const tokens = (await res.json()) as { id_token?: string };
+  const tokens = (await res.json()) as { id_token?: string; access_token?: string };
   if (!tokens.id_token) throw new Error('id_token manquant');
 
   // jwtVerify : refuse alg:none, vérifie signature/exp/iss/aud.
@@ -77,7 +89,22 @@ export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: st
   });
   if (payload.nonce !== tx.nonce) throw new Error('nonce invalide');
   if (typeof payload.sub !== 'string') throw new Error('sub invalide');
-  // Groupes Keycloak (2b) : sert au contrôle d'appartenance à la collection dans
-  // le visualiseur de sources. Nécessite les groupes/rôles dans l'id_token.
-  return { sub: payload.sub, groups: extractGroups(payload) };
+
+  // Groupes Keycloak (2b) : contrôle d'appartenance à la collection dans la visionneuse.
+  // On les lit dans l'id_token ET dans l'access_token : Keycloak ne met pas forcément
+  // `realm_access.roles` dans l'id_token, mais l'access_token les porte par défaut.
+  // L'access_token est vérifié en signature+issuer (son `aud` diffère du client, donc
+  // PAS de contrôle d'audience) ; best-effort : s'il est opaque/non vérifiable, on
+  // garde les seuls groupes de l'id_token sans casser le login.
+  let accessPayload: JWTPayload | null = null;
+  if (tokens.access_token) {
+    try {
+      accessPayload = (
+        await jwtVerify(tokens.access_token, getJwks(c.internalUrl), { issuer: c.issuerPublic })
+      ).payload;
+    } catch (err) {
+      console.error('[oidc] access_token inexploitable pour les rôles:', (err as Error).message);
+    }
+  }
+  return { sub: payload.sub, groups: mergeTokenGroups(payload, accessPayload) };
 }
