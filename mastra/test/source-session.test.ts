@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { signCookieValue, verifyCookieValue, readSourceSession, makeSourceSessionCookie } from '../src/lib/source-session.js';
+import {
+  signCookieValue,
+  verifyCookieValue,
+  clearSourceSessionCookie,
+  hashSourceSessionToken,
+  makeSourceSessionCookie,
+  newSourceSessionToken,
+  readSourceSessionToken,
+} from '../src/lib/source-session.js';
 
 const KEY = 'rp-cookie-key-32-octets-aaaaaaaaaa';
 
@@ -20,29 +28,35 @@ test('verify : mauvaise clé -> null', () => {
   assert.equal(verifyCookieValue(v, 'autre-cle'), null);
 });
 
-test('readSourceSession : session valide (avec groupes)', () => {
-  const v = signCookieValue({ sub: 'u', groups: ['sgar', 'pref13'], exp: 9_000_000_000_000 }, KEY, 'session');
-  assert.deepEqual(readSourceSession(`a=b; src_session=${v}; c=d`, KEY, Date.now()), {
-    sub: 'u',
-    groups: ['sgar', 'pref13'],
-  });
+test('session visionneuse : le cookie ne contient qu’un token opaque', () => {
+  const token = newSourceSessionToken();
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(readSourceSessionToken(`a=b; src_session=${token}; c=d`), token);
+  assert.equal(hashSourceSessionToken(token).length, 64);
 });
 
-test('readSourceSession : groupes absents -> [] (ancien cookie)', () => {
-  const v = signCookieValue({ sub: 'u', exp: 9_000_000_000_000 }, KEY, 'session');
-  assert.deepEqual(readSourceSession(`src_session=${v}`, KEY, Date.now()), { sub: 'u', groups: [] });
+test('session visionneuse : un ancien cookie signé n’est plus accepté', () => {
+  const oldCookie = signCookieValue({ sub: 'u', groups: ['sgar'], exp: 9_000_000_000_000 }, KEY, 'session');
+  assert.equal(readSourceSessionToken(`src_session=${oldCookie}`), null);
 });
 
-test('readSourceSession : session expirée -> null', () => {
-  const v = signCookieValue({ sub: 'u', exp: 1000 }, KEY, 'session');
-  assert.equal(readSourceSession(`src_session=${v}`, KEY, Date.now()), null);
+test('session visionneuse : token malformé -> null', () => {
+  assert.equal(readSourceSessionToken('src_session=not-a-token'), null);
+  assert.equal(readSourceSessionToken('other=1;src_session=x'), null);
 });
 
 test('makeSourceSessionCookie : attributs de sécurité', () => {
-  const c = makeSourceSessionCookie('u', ['sgar'], KEY);
+  const c = makeSourceSessionCookie(newSourceSessionToken());
   assert.match(c, /^src_session=/);
   assert.match(c, /HttpOnly/);
   assert.match(c, /SameSite=Lax/);
+  assert.match(c, /Path=\/v1\/source/);
+});
+
+test('clearSourceSessionCookie : même chemin de cookie', () => {
+  const c = clearSourceSessionCookie();
+  assert.match(c, /^src_session=/);
+  assert.match(c, /Max-Age=0/);
   assert.match(c, /Path=\/v1\/source/);
 });
 

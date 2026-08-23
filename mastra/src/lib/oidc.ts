@@ -46,9 +46,12 @@ export interface OidcTx {
   nonce: string;
   verifier: string;
   returnUrl: string;
+  // true for the first attempt from the viewer. If Keycloak has no active
+  // SSO session, the callback transparently restarts the flow interactively.
+  silent?: boolean;
 }
 
-export function beginLogin(returnUrl: string): { redirectUrl: string; tx: OidcTx } {
+export function beginLogin(returnUrl: string, silent = false): { redirectUrl: string; tx: OidcTx } {
   const c = cfg();
   const state = randomUrlToken();
   const nonce = randomUrlToken();
@@ -59,11 +62,15 @@ export function beginLogin(returnUrl: string): { redirectUrl: string; tx: OidcTx
     state,
     nonce,
     challenge: pkceChallenge(verifier),
+    prompt: silent ? 'none' : undefined,
   });
-  return { redirectUrl, tx: { state, nonce, verifier, returnUrl } };
+  return { redirectUrl, tx: { state, nonce, verifier, returnUrl, silent } };
 }
 
-export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: string; groups: string[] }> {
+export async function completeLogin(
+  code: string,
+  tx: OidcTx,
+): Promise<{ sub: string; groups: string[]; oidcSid?: string }> {
   const c = cfg();
   const res = await fetch(`${c.internalUrl}/protocol/openid-connect/token`, {
     method: 'POST',
@@ -106,5 +113,54 @@ export async function completeLogin(code: string, tx: OidcTx): Promise<{ sub: st
       console.error('[oidc] access_token inexploitable pour les rôles:', (err as Error).message);
     }
   }
-  return { sub: payload.sub, groups: mergeTokenGroups(payload, accessPayload) };
+  const oidcSid =
+    typeof (payload as Record<string, unknown>).sid === 'string'
+      ? ((payload as Record<string, unknown>).sid as string)
+      : typeof (payload as Record<string, unknown>).session_state === 'string'
+        ? ((payload as Record<string, unknown>).session_state as string)
+        : undefined;
+  return { sub: payload.sub, groups: mergeTokenGroups(payload, accessPayload), oidcSid };
+}
+
+/** Issuer public attendu par les notifications de logout Keycloak. */
+export function oidcIssuer(): string {
+  return cfg().issuerPublic;
+}
+
+/**
+ * Valide un logout_token OIDC Back-Channel Logout 1.0.
+ * Aucun sid/sub fourni par le client HTTP n'est accepté sans signature IdP.
+ */
+export async function verifyOidcLogoutToken(
+  logoutToken: string,
+): Promise<{ sid?: string; sub?: string; jti: string; iat: number }> {
+  const c = cfg();
+  const { payload } = await jwtVerify(logoutToken, getJwks(c.internalUrl), {
+    issuer: c.issuerPublic,
+    audience: c.clientId,
+  });
+  if (payload.nonce !== undefined) throw new Error('logout_token ne doit pas contenir nonce');
+  if (typeof payload.jti !== 'string' || payload.jti.length === 0) {
+    throw new Error('jti manquant dans logout_token');
+  }
+  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+    throw new Error('iat manquant dans logout_token');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.iat > now + 60 || payload.iat < now - 60 * 60) {
+    throw new Error('iat hors fenêtre dans logout_token');
+  }
+
+  const events = (payload as Record<string, unknown>).events;
+  const backchannelEvent = 'http://schemas.openid.net/event/backchannel-logout';
+  if (!events || typeof events !== 'object' || Array.isArray(events) || !(backchannelEvent in events)) {
+    throw new Error('événement backchannel-logout manquant');
+  }
+
+  const sid = typeof (payload as Record<string, unknown>).sid === 'string'
+    ? ((payload as Record<string, unknown>).sid as string)
+    : undefined;
+  const sub = typeof payload.sub === 'string' ? payload.sub : undefined;
+  if (!sid && !sub) throw new Error('sid/sub manquant dans logout_token');
+  return { sid, sub, jti: payload.jti, iat: payload.iat };
 }

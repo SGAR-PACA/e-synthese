@@ -70,10 +70,14 @@ services:
       - MASTRA_OIDC_ISSUER=${MASTRA_OIDC_ISSUER:-https://${DOMAIN_FRONT}/auth/realms/conversations}
       - MASTRA_OIDC_INTERNAL_URL=${MASTRA_OIDC_INTERNAL_URL:-http://keycloak:8080/auth/realms/conversations}
       - MASTRA_OIDC_CLIENT_ID=${MASTRA_OIDC_CLIENT_ID:-mastra-sources}
-      - MASTRA_OIDC_CLIENT_SECRET=${MASTRA_OIDC_CLIENT_SECRET:-}
-      - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-}
-      - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:-}
+      - MASTRA_OIDC_CLIENT_SECRET=${MASTRA_OIDC_CLIENT_SECRET:?MASTRA_OIDC_CLIENT_SECRET requis}
+      - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-https://${DOMAIN_FRONT}/v1/source/callback}
+      - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:?MASTRA_RP_COOKIE_KEY requis}
       - MASTRA_SOURCE_LINK_KEY=${MASTRA_SOURCE_LINK_KEY:-}
+      # Session opaque côté serveur : 15 min par défaut, au plus 30 min. Au-delà,
+      # la visionneuse refait une autorisation OIDC silencieuse et récupère les
+      # groupes Keycloak à jour.
+      - MASTRA_SOURCE_SESSION_TTL_SECONDS=${MASTRA_SOURCE_SESSION_TTL_SECONDS:-900}
       # --- Notation utilisateur (widget 5 étoiles) ---
       # MASTRA_RATING_AUDIENCE doit valoir l'id du client public Keycloak (mastra-rating-spa),
       # sinon requireRatingUser renvoie 503 « Notation non configurée ». Réutilise MASTRA_OIDC_ISSUER
@@ -86,6 +90,8 @@ services:
       mastra_postgresql:
         condition: service_healthy
         restart: true
+      keycloak-provision-mastra-sources:
+        condition: service_completed_successfully
       ocr:
         condition: service_started
     networks:
@@ -243,6 +249,10 @@ services:
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY requis}
       - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT}
       - LLM_CONFIGURATION_FILE_PATH=/tmp/llm-custom.json
+      # Ne laisse pas la session Django survivre au timeout SSO Keycloak (30 min
+      # dans le realm). À expiration, le front repasse par /users/me puis affiche
+      # la connexion ; le silent-login ne réussit que si Keycloak a encore son SSO.
+      - SESSION_COOKIE_AGE=${CONVERSATIONS_SESSION_COOKIE_AGE:-1800}
 
       # Mail
       - DJANGO_EMAIL_BRAND_NAME=${DJANGO_EMAIL_BRAND_NAME:-E-Synthèse}
@@ -260,6 +270,7 @@ services:
 
       # OIDC
       - OIDC_OP_AUTHORIZATION_ENDPOINT=https://${DOMAIN_FRONT}/auth/realms/conversations/protocol/openid-connect/auth
+      - OIDC_OP_LOGOUT_ENDPOINT=https://${DOMAIN_FRONT}/auth/realms/conversations/protocol/openid-connect/logout
       - OIDC_RP_CLIENT_SECRET=${OIDC_RP_CLIENT_SECRET:?OIDC_RP_CLIENT_SECRET requis}
       - LOGIN_REDIRECT_URL=https://${DOMAIN_FRONT}
       - LOGIN_REDIRECT_URL_FAILURE=https://${DOMAIN_FRONT}
@@ -447,6 +458,29 @@ services:
       - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
       - "traefik.http.routers.auth.priority=100"
       - "traefik.http.services.auth.loadbalancer.server.port=8080"
+
+  # Client confidentiel de la visionneuse : le code OIDC + PKCE ne partage aucun
+  # token avec le navigateur. Le back-channel logout révoque les sessions Mastra
+  # même si l'utilisateur se déconnecte depuis Conversations ou Keycloak.
+  keycloak-provision-mastra-sources:
+    image: quay.io/keycloak/keycloak:26.3
+    restart: "no"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      DOMAIN_FRONT: ${DOMAIN_FRONT:?DOMAIN_FRONT requis}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis}
+      MASTRA_OIDC_CLIENT_ID: ${MASTRA_OIDC_CLIENT_ID:-mastra-sources}
+      MASTRA_OIDC_CLIENT_SECRET: ${MASTRA_OIDC_CLIENT_SECRET:?MASTRA_OIDC_CLIENT_SECRET requis}
+      MASTRA_OIDC_REDIRECT_URI: ${MASTRA_OIDC_REDIRECT_URI:-https://${DOMAIN_FRONT}/v1/source/callback}
+      MASTRA_OIDC_BACKCHANNEL_LOGOUT_URL: ${MASTRA_OIDC_BACKCHANNEL_LOGOUT_URL:-}
+    volumes:
+      - ./front-back/docker/auth/provision-mastra-sources-client.sh:/opt/provision-mastra-sources.sh:ro
+    entrypoint: /bin/sh
+    command: ["-c", "/opt/provision-mastra-sources.sh"]
+    networks:
+      - default
 
   # Provisionne Keycloak à chaque déploiement, de façon idempotente. Deux rôles :
   #  1. force `registrationAllowed=false` sur le realm (ferme l'auto-inscription) ;

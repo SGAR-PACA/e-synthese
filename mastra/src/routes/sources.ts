@@ -22,7 +22,7 @@ export function escapeHtml(s: string): string {
 
 function linkKey(): string {
   const k = process.env.MASTRA_SOURCE_LINK_KEY;
-  if (!k) throw new Error('MASTRA_SOURCE_LINK_KEY manquant');
+  if (!k || k.length < 32) throw new Error('MASTRA_SOURCE_LINK_KEY manquant ou trop court (>= 32 caractères)');
   return k;
 }
 
@@ -42,20 +42,20 @@ async function verifyAccess(c: any): Promise<{ sub: string; file: DocumentFile }
 
   const file = await getDocumentFileByAlbertId(documentId);
   if (!file) return c.text('Document introuvable.', 404);
-  if (file.status === 'processing') return c.html(waitingPage(), 200);
+  if (file.status === 'processing') return c.html(waitingPage(), 200, PRIVATE_NO_STORE);
   if (file.status === 'failed' || !file.s3_key_searchable) return c.text('Document indisponible.', 404);
 
   // 2b — cloisonnement par groupe : même si le lien signé est valide, l'utilisateur
   // doit être autorisé pour la collection du document (empêche l'accès via un lien
   // partagé/fuité vers un document d'une autre administration). Admin (null) → tout ;
   // sinon la collection du doc doit être autorisée ; un doc sans collection n'est pas
-  // autorisable → refus. Escape hatch de transition cohérent avec le chat.
-  if (process.env.MASTRA_REQUIRE_USER_TOKEN !== 'false') {
-    const allowed = await resolveAllowedCollections(session.groups);
-    const cid = file.collection_id;
-    const authorized = allowed === null || (cid != null && allowed.includes(cid));
-    if (!authorized) return c.text('Accès non autorisé à ce document.', 403);
-  }
+  // autorisable → refus. Cette vérification est volontairement obligatoire pour la
+  // visionneuse : aucun escape hatch d'environnement ne doit transformer un lien
+  // signé en accès à tout le corpus.
+  const allowed = await resolveAllowedCollections(session.groups);
+  const cid = file.collection_id;
+  const authorized = allowed === null || (cid != null && allowed.includes(cid));
+  if (!authorized) return c.text('Accès non autorisé à ce document.', 403);
 
   return { sub: session.sub, file };
 }
@@ -64,6 +64,11 @@ function waitingPage(): string {
   return `<!doctype html><meta charset="utf-8"><title>Document en cours</title>
 <body style="font-family:system-ui;padding:2rem">Document en cours de traitement, réessayez dans un instant.</body>`;
 }
+
+const PRIVATE_NO_STORE = {
+  'Cache-Control': 'private, no-store',
+  Pragma: 'no-cache',
+};
 
 // Rate limit léger (fenêtre fixe, par IP) pour borner le coût CPU de /highlights.
 const HL_WINDOW_MS = 60_000;
@@ -110,7 +115,9 @@ export const sourcesRoute = [
         return new Response('Visionneuse indisponible.', { status: 503 });
       }
       const html = readFileSync(file, 'utf8').replaceAll('{{TITLE}}', escapeHtml(acc.file.filename));
-      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...VIEWER_CSP } });
+      return new Response(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...PRIVATE_NO_STORE, ...VIEWER_CSP },
+      });
     },
   }),
 
@@ -125,6 +132,7 @@ export const sourcesRoute = [
       const headers: Record<string, string> = {
         'Content-Type': 'application/pdf',
         'Accept-Ranges': 'bytes',
+        ...PRIVATE_NO_STORE,
       };
       if (s3.contentLength != null) headers['Content-Length'] = String(s3.contentLength);
       if (s3.contentRange) headers['Content-Range'] = s3.contentRange;
@@ -148,7 +156,7 @@ export const sourcesRoute = [
         const allChunks = await getDocumentChunks(documentId);
         const cited = allChunks.filter((ch) => usedIds.has(ch.id));
         const citedText = cited.map((ch) => ch.content);
-        if (cited.length === 0) return c.json({ pages: [], citedText });
+        if (cited.length === 0) return c.json({ pages: [], citedText }, 200, PRIVATE_NO_STORE);
         const s3 = await getPdfStream(acc.file.s3_key_searchable!);
         const bytes = new Uint8Array(await new Response(s3.body).arrayBuffer());
 
@@ -163,9 +171,9 @@ export const sourcesRoute = [
         // Mode debug (env HIGHLIGHT_DEBUG=1, jamais en prod) : couverture par chunk.
         if (process.env.HIGHLIGHT_DEBUG === '1') {
           const debug = buildAlignDebug(documentId, aligned.report, false);
-          return c.json({ pages, citedText, debug });
+          return c.json({ pages, citedText, debug }, 200, PRIVATE_NO_STORE);
         }
-        return c.json({ pages, citedText });
+        return c.json({ pages, citedText }, 200, PRIVATE_NO_STORE);
       } catch (err) {
         console.error('[sources] highlights échec:', (err as Error).message);
         return c.json({ pages: [], citedText: [] });

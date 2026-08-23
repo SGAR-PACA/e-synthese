@@ -153,6 +153,9 @@ Dans **Application → Environment** : coller chaque variable de `.env.example.p
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
 | `KC_DB_PASSWORD` | `openssl rand -hex 32` |
 | `MASTRA_DB_PASSWORD` | `openssl rand -hex 32` |
+| `MASTRA_OIDC_CLIENT_SECRET` | `openssl rand -hex 32` (secret du client Keycloak `mastra-sources`) |
+| `MASTRA_RP_COOKIE_KEY` | `openssl rand -hex 32` (clé de transaction login, à conserver) |
+| `MASTRA_SOURCE_LINK_KEY` | `openssl rand -hex 32` (signature des liens visionneuse) |
 | `KEYCLOAK_ADMIN_PASSWORD` | `openssl rand -hex 16` (à mémoriser) |
 | `OIDC_RP_CLIENT_SECRET` | Provisoire `openssl rand -hex 32` — sera **régénéré** à l'étape 9 |
 | `AWS_S3_SECRET_ACCESS_KEY` | `openssl rand -hex 32` |
@@ -161,6 +164,11 @@ Dans **Application → Environment** : coller chaque variable de `.env.example.p
 | `EMAIL_USER` | identifiant SMTP |
 | `EMAIL_PASSWORD` | mot de passe SMTP |
 | `LLM_MODEL` | `albert-large` (par défaut) |
+
+La session Conversations est limitée à 30 minutes par défaut (`CONVERSATIONS_SESSION_COOKIE_AGE=1800`),
+alignée sur le timeout SSO Keycloak ; la visionneuse utilise une session opaque révocable de 15 minutes.
+Le service `keycloak-provision-mastra-sources` crée ou met à jour automatiquement le client confidentiel
+`mastra-sources` et son URL de logout back-channel.
 
 ### Sauvegarder les secrets ailleurs
 

@@ -73,6 +73,25 @@ export async function applySchema(): Promise<void> {
       expires_at     TEXT NOT NULL,
       created_at     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     );
+    -- Session opaque et révocable de la visionneuse OIDC. Le cookie navigateur
+    -- ne contient que le token aléatoire ; les droits et le lien avec la session
+    -- Keycloak restent côté serveur.
+    CREATE TABLE IF NOT EXISTS source_sessions (
+      token_hash     TEXT PRIMARY KEY,
+      sub            TEXT NOT NULL,
+      oidc_sid       TEXT,
+      groups         JSONB NOT NULL DEFAULT '[]'::jsonb,
+      expires_at     TEXT NOT NULL,
+      created_at     TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    );
+    CREATE INDEX IF NOT EXISTS idx_source_sessions_expiry ON source_sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_source_sessions_oidc_sid ON source_sessions(oidc_sid);
+    CREATE INDEX IF NOT EXISTS idx_source_sessions_sub ON source_sessions(sub);
+    CREATE TABLE IF NOT EXISTS source_logout_tokens (
+      jti            TEXT PRIMARY KEY,
+      expires_at     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_source_logout_tokens_expiry ON source_logout_tokens(expires_at);
     CREATE TABLE IF NOT EXISTS config (
       key            TEXT PRIMARY KEY,
       value          TEXT NOT NULL
@@ -165,6 +184,8 @@ const NOW_ISO_SQL = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:S
 
 async function cleanupExpired(): Promise<void> {
   await run(`DELETE FROM sessions WHERE expires_at < ${NOW_ISO_SQL}`);
+  await run(`DELETE FROM source_sessions WHERE expires_at < ${NOW_ISO_SQL}`);
+  await run(`DELETE FROM source_logout_tokens WHERE expires_at < ${NOW_ISO_SQL}`);
   await run(`DELETE FROM password_resets WHERE expires_at < ${NOW_ISO_SQL}`);
 }
 
@@ -216,6 +237,15 @@ export interface DbSession {
   user_id: number;
   csrf_token: string;
   expires_at: string;
+}
+
+export interface DbSourceSession {
+  token_hash: string;
+  sub: string;
+  oidc_sid: string | null;
+  groups: unknown;
+  expires_at: string;
+  created_at: string;
 }
 
 export interface DbInvitation {
@@ -385,6 +415,79 @@ export async function deleteSession(tokenHash: string): Promise<void> {
 
 export async function deleteUserSessions(userId: number): Promise<void> {
   await run('DELETE FROM sessions WHERE user_id = $1', [userId]);
+}
+
+// ---- Sessions visionneuse OIDC ----
+export async function createSourceSession(
+  tokenHash: string,
+  sub: string,
+  oidcSid: string | undefined,
+  groups: string[],
+  expiresAt: string,
+): Promise<void> {
+  await run(
+    `INSERT INTO source_sessions (token_hash, sub, oidc_sid, groups, expires_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5)`,
+    [tokenHash, sub, oidcSid ?? null, JSON.stringify(groups), expiresAt],
+  );
+}
+
+export async function findSourceSession(tokenHash: string): Promise<DbSourceSession | undefined> {
+  const rows = await query<DbSourceSession>(
+    `SELECT * FROM source_sessions
+     WHERE token_hash = $1 AND expires_at > ${NOW_ISO_SQL}`,
+    [tokenHash],
+  );
+  return rows[0];
+}
+
+export async function deleteSourceSession(tokenHash: string): Promise<void> {
+  await run('DELETE FROM source_sessions WHERE token_hash = $1', [tokenHash]);
+}
+
+export async function deleteSourceSessionsByOidcSid(oidcSid: string): Promise<void> {
+  await run('DELETE FROM source_sessions WHERE oidc_sid = $1', [oidcSid]);
+}
+
+export async function deleteSourceSessionsBySub(sub: string): Promise<void> {
+  await run('DELETE FROM source_sessions WHERE sub = $1', [sub]);
+}
+
+// Claim + révocation dans une seule transaction : les retries Keycloak sont
+// idempotents, mais un ancien logout_token ne peut pas révoquer une nouvelle
+// session entre le claim et la suppression.
+export async function revokeSourceSessionsForLogout(
+  jti: string,
+  expiresAt: string,
+  oidcSid?: string,
+  sub?: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const claimed = await client.query<{ jti: string }>(
+      `INSERT INTO source_logout_tokens (jti, expires_at) VALUES ($1, $2)
+       ON CONFLICT (jti) DO NOTHING RETURNING jti`,
+      [jti, expiresAt],
+    );
+    if (claimed.rows.length === 0) {
+      await client.query('COMMIT');
+      return false;
+    }
+    if (oidcSid) {
+      await client.query('DELETE FROM source_sessions WHERE oidc_sid = $1', [oidcSid]);
+    } else if (sub) {
+      await client.query('DELETE FROM source_sessions WHERE sub = $1', [sub]);
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ---- Invitations ----
