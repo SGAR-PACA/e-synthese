@@ -13,7 +13,7 @@ import { verifyForwardedUserToken } from '../lib/chat-auth.js';
 import { extractGroups, resolveAllowedCollections } from '../lib/collection-scope.js';
 import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
-import { getDocumentFilesByFilename } from '../lib/db.js';
+import { getDocumentFilesByFilename, getDocumentFileByAlbertId } from '../lib/db.js';
 import { pickDocumentFile } from '../lib/source-resolve.js';
 import { injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
@@ -186,42 +186,52 @@ function createBracketStripper(): (delta: string) => string {
   };
 }
 
-// Albert expose deux espaces d'ID : le `document_id` renvoyé par la RECHERCHE
-// diffère de l'ID d'UPLOAD stocké (albert_document_id). Pour que la visionneuse
-// retrouve le PDF, on remappe l'ID de chaque chunk vers l'ID stocké, via le NOM
-// du document.
-//
-// CLOISONNEMENT (Chantier 2) : un même nom peut exister dans plusieurs collections
-// (doublons inter-groupes / copies legacy). Le remap doit désigner l'exemplaire
-// d'une collection AUTORISÉE — sinon le lien pointe vers un homonyme hors périmètre
-// et la visionneuse refuse (403) un lien qu'on vient de fabriquer. On délègue le
-// choix à `pickDocumentFile` : cloisonné à `allowedCollections`, en préférant la
-// collection RÉELLE du chunk (`ch.collectionId`) quand elle est connue.
-//
-// Cache par (nom + collection réelle). Si aucune copie autorisée : on EFFACE
-// l'documentId (pas de lien plutôt qu'un lien voué au 403). `allowedCollections`
-// null = admin (non restreint).
+// Résout l'`albert_document_id` SERVABLE (et autorisé) d'un chunk, ou null.
+// Deux voies, dans l'ordre :
+//  1. par l'ID du chunk : `document_id` renvoyé par la recherche Albert EST
+//     l'albert_document_id stocké → résolution directe (cas standard) ;
+//  2. par le NOM : repli pour les cas où l'ID de recherche ≠ ID d'upload, ou
+//     quand Albert ne renvoie pas de nom (copies homonymes).
+// Dans les DEUX cas, `pickDocumentFile` impose le cloisonnement : on ne retient
+// que si la collection du document est autorisée (admin = null → tout). Donc le
+// lien pointe TOUJOURS vers une copie visible par l'utilisateur, jamais un 403.
+async function resolveServableId(
+  ch: RagChunk,
+  allowedCollections: number[] | null,
+): Promise<string | null> {
+  try {
+    // 1. Voie directe : l'id du chunk = albert_document_id.
+    if (ch.documentId) {
+      const byId = await getDocumentFileByAlbertId(ch.documentId);
+      if (byId) {
+        const picked = pickDocumentFile([byId], allowedCollections, ch.collectionId);
+        if (picked) return picked.albert_document_id;
+      }
+    }
+    // 2. Repli par nom (cloisonné aux collections autorisées).
+    if (ch.name) {
+      const byName = await getDocumentFilesByFilename(ch.name);
+      const picked = pickDocumentFile(byName, allowedCollections, ch.collectionId);
+      if (picked) return picked.albert_document_id;
+    }
+    return null;
+  } catch (err) {
+    console.error('[sources] remap ID échoué:', (err as Error).message);
+    return null;
+  }
+}
+
+// Remappe chaque chunk vers l'albert_document_id servable (et autorisé), pour que
+// le lien de la visionneuse ouvre le bon PDF. Si aucune copie autorisée : on EFFACE
+// l'id (pas de lien plutôt qu'un lien voué au 403). Cache par (id + nom + collection).
 async function remapDocumentIds(
   chunks: RagChunk[],
   allowedCollections: number[] | null,
 ): Promise<void> {
   const cache = new Map<string, string | null>();
   for (const ch of chunks) {
-    if (!ch.name) continue;
-    const key = `${ch.name}::${ch.collectionId ?? ''}`;
-    if (!cache.has(key)) {
-      try {
-        const candidates = await getDocumentFilesByFilename(ch.name);
-        const picked = pickDocumentFile(candidates, allowedCollections, ch.collectionId);
-        cache.set(key, picked?.albert_document_id ?? null);
-      } catch (err) {
-        console.error('[sources] remap ID échoué:', (err as Error).message);
-        cache.set(key, null);
-      }
-    }
-    // Toujours réécrire : l'ID de recherche brut n'est jamais servable. Une copie
-    // autorisée → son ID d'upload ; sinon `undefined` → pas de lien (indexByName
-    // ignore les chunks sans documentId).
+    const key = `${ch.documentId ?? ''}::${ch.name ?? ''}::${ch.collectionId ?? ''}`;
+    if (!cache.has(key)) cache.set(key, await resolveServableId(ch, allowedCollections));
     ch.documentId = cache.get(key) ?? undefined;
   }
 }

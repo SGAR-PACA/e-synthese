@@ -39,6 +39,21 @@ export function normalizeHit(r: any): RagChunk {
   };
 }
 
+// Défense en profondeur (Chantier 2) : on ne garde QUE les passages dont la
+// collection est autorisée. Même si le filtre `collection_ids` d'Albert marche,
+// cette barrière côté app garantit qu'un passage hors périmètre (Albert qui
+// déborde, régression de paramètre, dédoublonnage cross-collection…) n'atteint
+// jamais la réponse. `allowedCollections` null = admin/non restreint → tout.
+// Un passage sans `collectionId` connu n'est jamais autorisable hors admin.
+export function filterByAllowedCollections(
+  chunks: RagChunk[],
+  allowedCollections: number[] | null | undefined,
+): RagChunk[] {
+  if (allowedCollections == null) return chunks;
+  const allow = new Set(allowedCollections);
+  return chunks.filter((c) => c.collectionId != null && allow.has(c.collectionId));
+}
+
 export interface ResultatRecherche {
   chunks: RagChunk[]; // 0..finalK passages retenus
   vide: boolean; // true si rien au-dessus du seuil → consigne "rien trouvé"
@@ -68,7 +83,8 @@ export async function rechercherMultiple(
     requetes.map(async (q) => {
       try {
         const res = await albert.search({ query: q, collections, k: config.searchWideK });
-        return (res.data || []).map(normalizeHit);
+        // Défense en profondeur : refiltrage par collection autorisée (cf. supra).
+        return filterByAllowedCollections((res.data || []).map(normalizeHit), allowedCollections);
       } catch (err) {
         console.error('[retrieval] recherche échouée pour', q, err);
         return [] as RagChunk[];
