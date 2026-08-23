@@ -23,6 +23,11 @@ export function normalizeHit(r: any): RagChunk {
   const md = r.chunk?.metadata || {};
   const documentId = r.chunk?.document_id != null ? String(r.chunk.document_id) : undefined;
   const chunkId = r.chunk?.id != null ? String(r.chunk.id) : undefined;
+  // Collection réelle d'où vient le hit (si Albert la renvoie) : sert à résoudre
+  // le lien vers le BON exemplaire quand un même nom existe dans plusieurs
+  // collections. Best-effort : absente → repli sur la copie autorisée la plus récente.
+  const rawCid = md.collection_id ?? r.chunk?.collection_id;
+  const collectionId = rawCid != null && Number.isFinite(Number(rawCid)) ? Number(rawCid) : undefined;
   return {
     score: r.score ?? 0,
     content: r.chunk?.content || r.content || '',
@@ -30,6 +35,7 @@ export function normalizeHit(r: any): RagChunk {
     url: md.directory_url || md.url || md.source_url || '',
     documentId,
     chunkId,
+    collectionId,
   };
 }
 

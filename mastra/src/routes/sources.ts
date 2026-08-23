@@ -8,9 +8,8 @@ import { getDocumentFileByAlbertId, logAudit, type DocumentFile } from '../lib/d
 import { resolveAllowedCollections } from '../lib/collection-scope.js';
 import { getPdfStream } from '../lib/storage.js';
 import { getDocumentChunks } from '../lib/albert-client.js';
-import { computeHighlights, type PageHighlights } from '../lib/highlight.js';
 import { computeAlignedHighlights, type ChunkAlign } from '../lib/highlight-align.js';
-import { parseUsedParam, splitIntoSearchPhrases } from '../lib/highlight-text.js';
+import { parseUsedParam } from '../lib/highlight-text.js';
 import { getClientIp } from '../lib/middleware.js';
 
 export function escapeHtml(s: string): string {
@@ -66,19 +65,6 @@ function waitingPage(): string {
 <body style="font-family:system-ui;padding:2rem">Document en cours de traitement, réessayez dans un instant.</body>`;
 }
 
-// Fusionne deux ensembles de pages de surlignage (par n° de page).
-function mergePages(a: PageHighlights[], b: PageHighlights[]): PageHighlights[] {
-  const byPage = new Map<number, PageHighlights>();
-  for (const src of [a, b]) {
-    for (const p of src) {
-      const ex = byPage.get(p.page);
-      if (ex) ex.rects.push(...p.rects);
-      else byPage.set(p.page, { page: p.page, width: p.width, height: p.height, rects: [...p.rects] });
-    }
-  }
-  return [...byPage.values()].sort((x, y) => x.page - y.page);
-}
-
 // Rate limit léger (fenêtre fixe, par IP) pour borner le coût CPU de /highlights.
 const HL_WINDOW_MS = 60_000;
 const HL_MAX = 40;
@@ -93,19 +79,19 @@ function highlightRateOk(ip: string): boolean {
 
 // Construit le rapport de debug de l'alignement + log un résumé serveur copiable.
 // N'est appelé que si HIGHLIGHT_DEBUG=1 (hors prod).
-function buildAlignDebug(documentId: string, report: ChunkAlign[], usedFallback: boolean) {
+function buildAlignDebug(documentId: string, report: ChunkAlign[], _unused: boolean) {
   const totWords = report.reduce((s, r) => s + r.words, 0);
   const totMatched = report.reduce((s, r) => s + r.matched, 0);
   const coverage = totWords ? Math.round((totMatched / totWords) * 100) : 0;
   console.log(
     `[highlights:debug] doc=${documentId} chunks=${report.length} ` +
-      `mots=${totMatched}/${totWords} couverture=${coverage}% fallback=${usedFallback}`,
+      `mots=${totMatched}/${totWords} couverture=${coverage}%`,
   );
   for (const r of report) {
     const pct = r.words ? Math.round((r.matched / r.words) * 100) : 0;
     console.log(`[highlights:debug]   chunk ${r.id ?? '?'}: ${r.matched}/${r.words} mots (${pct}%)`);
   }
-  return { chunks: report.length, totWords, totMatched, coverage, usedFallback, perChunk: report };
+  return { chunks: report.length, totWords, totMatched, coverage, perChunk: report };
 }
 
 export const sourcesRoute = [
@@ -158,11 +144,6 @@ export const sourcesRoute = [
       }
       const documentId = c.req.param('documentId');
       const usedIds = new Set(parseUsedParam(c.req.query('used')));
-      // Jetons de la réponse (`a`) : si présents, on ne surligne QUE ce que l'IA a dit
-      // (intersection réponse ∩ source) au lieu du chunk entier. Déjà normalisés
-      // (a-z0-9) à la génération -> simple split sur virgule.
-      const aRaw = c.req.query('a') ?? '';
-      const answerTokens = aRaw ? new Set(aRaw.split(',').filter(Boolean)) : undefined;
       try {
         const allChunks = await getDocumentChunks(documentId);
         const cited = allChunks.filter((ch) => usedIds.has(ch.id));
@@ -171,28 +152,17 @@ export const sourcesRoute = [
         const s3 = await getPdfStream(acc.file.s3_key_searchable!);
         const bytes = new Uint8Array(await new Response(s3.body).arrayBuffer());
 
-        // Méthode principale : alignement du chunk sur le texte structuré du PDF
-        // (couverture élevée, contigu, sans parasites). cacheKey = clé S3 immuable.
-        // answerTokens (optionnel) restreint le surlignage aux mots réellement cités.
-        const aligned = computeAlignedHighlights(bytes, cited, acc.file.s3_key_searchable ?? undefined, answerTokens);
-        let pages = aligned.pages;
-        let usedFallback = false;
-        // Repli CIBLÉ par chunk : chaque chunk non aligné (matched===0) est retenté
-        // avec l'ancienne méthode par phrases, puis fusionné (pas de régression de
-        // couverture quand seuls quelques chunks échouent). Désactivé en mode restreint
-        // (answerTokens) : le repli par phrases n'est pas filtré et réintroduirait du bruit.
-        const failedChunks = answerTokens ? [] : cited.filter((_, i) => aligned.report[i].matched === 0);
-        if (failedChunks.length) {
-          const phrases = failedChunks.flatMap((ch) => splitIntoSearchPhrases(ch.content));
-          if (phrases.length) {
-            const fb = computeHighlights(bytes, phrases);
-            if (fb.length) { pages = mergePages(pages, fb); usedFallback = true; }
-          }
-        }
+        // Surlignage par ALIGNEMENT uniquement : chaque chunk cité est aligné en un
+        // BLOC contigu localisé sur le texte du PDF (cacheKey = clé S3 immuable).
+        // On surligne tout le chunk aligné, et RIEN d'autre : plus de repli par
+        // recherche de phrases (page.search), qui remontait toutes les occurrences
+        // et surlignait des doublons hors du chunk cité.
+        const aligned = computeAlignedHighlights(bytes, cited, acc.file.s3_key_searchable ?? undefined);
+        const pages = aligned.pages;
 
         // Mode debug (env HIGHLIGHT_DEBUG=1, jamais en prod) : couverture par chunk.
         if (process.env.HIGHLIGHT_DEBUG === '1') {
-          const debug = buildAlignDebug(documentId, aligned.report, usedFallback);
+          const debug = buildAlignDebug(documentId, aligned.report, false);
           return c.json({ pages, citedText, debug });
         }
         return c.json({ pages, citedText });
