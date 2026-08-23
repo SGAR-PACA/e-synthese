@@ -119,10 +119,24 @@ export async function deleteDocument(documentId: string) {
   return res.json();
 }
 
+// Construit le corps de /v1/search. PURE (testée).
+// ⚠️ SÉCURITÉ : l'API Albert attend `collection_ids` (PAS `collections`) et
+// `limit` (PAS `k`). Un champ au mauvais nom est IGNORÉ en silence → filtre vide
+// (`collection_ids: []` par défaut) → recherche sur TOUT le corpus = fuite de
+// cloisonnement. `limit` est plafonné à 100 (max de l'API).
+export function buildSearchBody(data: { query: string; collections: number[]; k?: number }): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    query: data.query,
+    collection_ids: data.collections,
+  };
+  if (data.k != null) body.limit = Math.min(data.k, 100);
+  return body;
+}
+
 export async function search(data: { query: string; collections: number[]; k?: number }) {
   const res = await albertFetch('/v1/search', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify(buildSearchBody(data)),
   });
   return res.json();
 }
