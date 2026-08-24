@@ -50,7 +50,12 @@ export async function processJob(job: DocumentFile, deps: JobDeps): Promise<void
       ocrApplied = r.ocrApplied;
     } catch (ocrErr) {
       // Repli : on garde l'original (déjà stocké) et on l'indexe tel quel.
-      console.error('[document-worker] OCR échec, repli original:', (ocrErr as Error).message);
+      const reason = (ocrErr as Error).message;
+      console.warn(
+        `[document-worker] OCR échec, repli original ` +
+        `file=${job.id} filename=${JSON.stringify(job.filename)} ` +
+        `collection=${job.collection_id ?? 'none'} reason=${reason}`,
+      );
       served = original;
       servedKey = originalKey(job.id);
       ocrApplied = false;
