@@ -11,4 +11,6 @@ COPY app.py /app/app.py
 WORKDIR /app
 USER 1000:1000
 ENTRYPOINT []
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "620", "app:app"]
+# L'ingestion Mastra est déjà séquentielle ; un seul worker évite que deux OCR
+# lourds se partagent 1 Go de mémoire et garantit que --jobs 1 reste effectif.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--timeout", "620", "app:app"]
