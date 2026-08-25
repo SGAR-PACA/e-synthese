@@ -171,6 +171,27 @@ const BACKFILL_MAX_DELAY_MS = 60 * 60 * 1000;
 
 const DEFAULT_LOCAL_PDF_CHUNK_SIZE = DEFAULT_PDF_CHUNK_SIZE;
 
+/**
+ * Métadonnées attachées à chaque chunk explicite envoyé à Albert.
+ * L'identifiant est celui du document traité : il varie donc avec la
+ * collection choisie à l'upload et ne doit jamais être codé en dur.
+ */
+export function buildAlbertChunkMetadata(
+  filename: string,
+  collectionId: number | null,
+  pageStart: number,
+  pageEnd: number,
+): Record<string, string> {
+  return {
+    document_name: filename,
+    filename,
+    parser: 'mupdf',
+    page_start: String(pageStart),
+    page_end: String(pageEnd),
+    ...(collectionId != null ? { collection_id: String(collectionId) } : {}),
+  };
+}
+
 function getLocalPdfChunkSize(): number {
   const value = Number(process.env.ALBERT_LOCAL_PDF_CHUNK_SIZE || DEFAULT_LOCAL_PDF_CHUNK_SIZE);
   return Number.isFinite(value) && value >= 256 && value <= 6000
@@ -270,13 +291,7 @@ function liveDeps(): JobDeps {
           documentId,
           localChunks.map((chunk) => ({
             content: chunk.content,
-            metadata: {
-              document_name: job.filename,
-              filename: job.filename,
-              parser: 'mupdf',
-              page_start: String(chunk.pageStart),
-              page_end: String(chunk.pageEnd),
-            },
+            metadata: buildAlbertChunkMetadata(job.filename, job.collection_id, chunk.pageStart, chunk.pageEnd),
           })),
         );
       } catch (err) {
