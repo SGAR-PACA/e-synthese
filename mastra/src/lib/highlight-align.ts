@@ -10,6 +10,7 @@
 //  - surlignages précis SANS parasites (on conserve uniquement les mots alignés).
 import * as mupdf from 'mupdf';
 import type { PageHighlights } from './highlight.js';
+import { dropPdfStructureTreeForExtraction } from './pdf-text.js';
 
 interface DocWord {
   norm: string; // forme normalisée (minuscule, sans accent, alphanum only)
@@ -112,7 +113,8 @@ function transformRect(
 // Extrait le flux ordonné des mots du PDF (texte normalisé + position + page + ligne)
 // et les dimensions de chaque page.
 function extractDocWords(pdfBytes: Uint8Array): { words: DocWord[]; dims: Map<number, PageMetrics> } {
-  const doc = mupdf.PDFDocument.openDocument(pdfBytes, 'application/pdf');
+  const doc = new mupdf.PDFDocument(pdfBytes);
+  dropPdfStructureTreeForExtraction(doc);
   const words: DocWord[] = [];
   const dims = new Map<number, PageMetrics>();
   let lineCounter = 0;

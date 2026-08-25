@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeAlignedHighlights, computeChunkAnchors, normalizeWord } from '../src/lib/highlight-align.js';
+import { buildTextChunksFromPages, extractPdfTextPages } from '../src/lib/pdf-text.js';
 
 function buildPdf(
   pages: string[][],
@@ -39,6 +40,46 @@ test('normalizeWord : minuscule, sans accent, sans Markdown', () => {
   assert.equal(normalizeWord('# Préfecture'), 'prefecture');
   assert.equal(normalizeWord('œuvre Æther'), 'oeuvreaether');
   assert.equal(normalizeWord('|'), '');
+});
+
+test('extractPdfTextPages : conserve les lignes dans l’ordre et les valeurs répétées', () => {
+  const pdf = buildPdf([
+    ['En-tete du tableau', 'Dpt 04', '7', '15', 'TOTAL REGION 6221'],
+  ]);
+  const pages = extractPdfTextPages(pdf);
+  assert.deepEqual(pages, [{
+    page: 1,
+    lines: ['En-tete du tableau', 'Dpt 04', '7', '15', 'TOTAL REGION 6221'],
+  }]);
+});
+
+test('buildTextChunksFromPages : découpage déterministe sans perte de texte', () => {
+  const longLine = 'A'.repeat(230);
+  const pages = [
+    { page: 1, lines: ['Titre', longLine, 'Dpt 04', '7', '15', 'TOTAL REGION 6221'] },
+    { page: 2, lines: ['Même ligne répétée', 'Même ligne répétée'] },
+  ];
+  const first = buildTextChunksFromPages(pages, 256);
+  const second = buildTextChunksFromPages(pages, 256);
+  assert.deepEqual(second, first);
+  assert.equal(first.map((chunk) => chunk.content).join('\n'), pages.flatMap((p) => p.lines).join('\n'));
+  assert.ok(first.some((chunk) => chunk.content.includes('TOTAL REGION 6221')));
+  const last = first.at(-1)!;
+  assert.ok(last.content.endsWith('Même ligne répétée\nMême ligne répétée'));
+  assert.equal(last.pageEnd, 2);
+});
+
+test('buildTextChunksFromPages : le défaut garde les lignes numériques dans leur contexte', () => {
+  const pages = [{
+    page: 1,
+    lines: ['A'.repeat(1785), '280 116', '0', '0', '280 116', '280 116'],
+  }];
+  const legacy = buildTextChunksFromPages(pages, 1800);
+  const current = buildTextChunksFromPages(pages);
+
+  assert.equal(legacy.length, 2, 'l’ancien seuil isolait la fin numérique');
+  assert.equal(current.length, 1, 'le seuil validé conserve le contexte du tableau');
+  assert.ok(current[0].content.endsWith('280 116\n0\n0\n280 116\n280 116'));
 });
 
 test('computeAlignedHighlights : chunk Markdown aligné sur PDF brut', () => {
