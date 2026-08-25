@@ -17,6 +17,7 @@ import {
 } from './storage.js';
 import * as albert from './albert-client.js';
 import { computeChunkAnchors } from './highlight-align.js';
+import { buildPdfTextChunks, DEFAULT_PDF_CHUNK_SIZE } from './pdf-text.js';
 import { withPriority } from './albert-limiter.js';
 
 export interface JobDeps {
@@ -168,6 +169,15 @@ async function indexDocumentHighlights(
 const highlightBackoff = new Map<string, { failures: number; nextAt: number }>();
 const BACKFILL_MAX_DELAY_MS = 60 * 60 * 1000;
 
+const DEFAULT_LOCAL_PDF_CHUNK_SIZE = DEFAULT_PDF_CHUNK_SIZE;
+
+function getLocalPdfChunkSize(): number {
+  const value = Number(process.env.ALBERT_LOCAL_PDF_CHUNK_SIZE || DEFAULT_LOCAL_PDF_CHUNK_SIZE);
+  return Number.isFinite(value) && value >= 256 && value <= 6000
+    ? Math.floor(value)
+    : DEFAULT_LOCAL_PDF_CHUNK_SIZE;
+}
+
 function deferHighlightBackfill(documentId: string): void {
   const previous = highlightBackoff.get(documentId);
   const failures = (previous?.failures ?? 0) + 1;
@@ -212,14 +222,80 @@ function liveDeps(): JobDeps {
     storeSearchable: (job, bytes) => putPdf(searchableKey(job.id), bytes),
     deleteOriginal: (job) => deletePdf(originalKey(job.id)),
     uploadToAlbert: async (job, bytes) => {
-      const fd = new FormData();
-      const blobPart = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      fd.append('file', new Blob([blobPart], { type: 'application/pdf' }), job.filename);
-      if (job.collection_id != null) fd.append('collection_id', String(job.collection_id));
-      const data = await albert.uploadDocument(fd);
+      const uploadPdfDirectly = async (): Promise<string> => {
+        const fd = new FormData();
+        const blobPart = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        fd.append('file', new Blob([blobPart], { type: 'application/pdf' }), job.filename);
+        if (job.collection_id != null) fd.append('collection_id', String(job.collection_id));
+        const data = await albert.uploadDocument(fd);
+        const id = (data as any)?.id ?? (data as any)?.document_id;
+        if (!id) throw new Error('Albert : id de document manquant');
+        return String(id);
+      };
+
+      let localChunks;
+      try {
+        localChunks = buildPdfTextChunks(bytes, getLocalPdfChunkSize());
+      } catch (err) {
+        // Repli conservateur pour les PDF que MuPDF ne saurait pas ouvrir :
+        // l'ancien chemin conserve le RAG, sans rendre l'upload indisponible.
+        console.warn(
+          `[document-worker] extraction MuPDF indisponible, repli upload PDF ` +
+          `file=${job.id} filename=${JSON.stringify(job.filename)} ` +
+          `reason=${(err as Error).message}`,
+        );
+        return uploadPdfDirectly();
+      }
+
+      if (!localChunks.length) {
+        // PDF valide mais sans couche texte exploitable : l'import direct reste
+        // le dernier filet de sécurité (notamment pour un OCR en échec).
+        console.warn(
+          `[document-worker] aucun texte MuPDF, repli upload PDF ` +
+          `file=${job.id} filename=${JSON.stringify(job.filename)}`,
+        );
+        return uploadPdfDirectly();
+      }
+
+      // Création sans fichier : le PDF reste uniquement dans le stockage privé
+      // E-Synthèse et Albert reçoit les chunks texte explicitement construits.
+      // L'appel est sortant, serveur-à-serveur ; aucune route document publique
+      // n'est ajoutée à l'application.
+      const data = await albert.createEmptyDocument(job.filename, job.collection_id);
       const id = (data as any)?.id ?? (data as any)?.document_id;
-      if (!id) throw new Error('Albert : id de document manquant');
-      return String(id);
+      if (!id) throw new Error('Albert : id de document vide pour les chunks MuPDF');
+      const documentId = String(id);
+      try {
+        await albert.createDocumentChunks(
+          documentId,
+          localChunks.map((chunk) => ({
+            content: chunk.content,
+            metadata: {
+              document_name: job.filename,
+              filename: job.filename,
+              parser: 'mupdf',
+              page_start: String(chunk.pageStart),
+              page_end: String(chunk.pageEnd),
+            },
+          })),
+        );
+      } catch (err) {
+        // Le document vide vient d'être créé par ce job : on le supprime pour
+        // éviter un document Albert orphelin si un lot échoue.
+        await albert.deleteDocument(documentId).catch((cleanupErr) => {
+          console.error(
+            `[document-worker] nettoyage document Albert échoué ` +
+            `document=${documentId} reason=${(cleanupErr as Error).message}`,
+          );
+        });
+        throw err;
+      }
+      console.info(
+        `[document-worker] chunks MuPDF envoyés à Albert ` +
+        `file=${job.id} document=${documentId} chunks=${localChunks.length} ` +
+        `chunkSize=${getLocalPdfChunkSize()}`,
+      );
+      return documentId;
     },
     indexHighlights: indexDocumentHighlights,
     markReady: (job, albertId, servedKey, ocrApplied) =>

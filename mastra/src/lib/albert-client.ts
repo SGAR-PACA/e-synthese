@@ -109,6 +109,51 @@ export async function uploadDocument(formData: FormData) {
   return res.json();
 }
 
+/**
+ * Crée un document Albert sans lui transmettre le PDF.
+ * Le contenu sera ajouté ensuite par createDocumentChunks(). Cette voie évite
+ * le parseur PDF d'Albert tout en conservant le document dans la collection
+ * choisie et derrière l'API serveur-à-serveur authentifiée.
+ */
+export async function createEmptyDocument(name: string, collectionId?: number | null) {
+  const formData = new FormData();
+  formData.append('name', name);
+  if (collectionId != null) formData.append('collection_id', String(collectionId));
+  return uploadDocument(formData);
+}
+
+export interface AlbertChunkInput {
+  content: string;
+  metadata?: Record<string, string>;
+}
+
+/**
+ * Ajoute des chunks explicites à un document Albert.
+ * Albert accepte au maximum 64 chunks par requête ; les lots sont donc envoyés
+ * séquentiellement sous le limiteur global et avec les mêmes retries que le
+ * reste du client. Aucun endpoint public E-Synthèse n'est créé par cette API.
+ */
+export async function createDocumentChunks(documentId: string, chunks: AlbertChunkInput[]): Promise<void> {
+  if (!chunks.length) throw new Error(`Albert document ${documentId} : aucun chunk à créer`);
+  for (let offset = 0; offset < chunks.length; offset += 64) {
+    const batch = chunks.slice(offset, offset + 64);
+    const res = await albertFetchWithRetry(`/v1/documents/${encodeURIComponent(documentId)}/chunks`, {
+      method: 'POST',
+      body: JSON.stringify({ chunks: batch }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `Albert POST /v1/documents/${documentId}/chunks ` +
+        `${res.status} (offset=${offset}): ${body.slice(0, 300)}`,
+      );
+    }
+    // La réponse peut être vide selon la version d'Albert. On la consomme pour
+    // libérer proprement la connexion HTTP avant le lot suivant.
+    await res.text().catch(() => '');
+  }
+}
+
 export async function getDocument(documentId: string) {
   const res = await albertFetch(`/v1/documents/${documentId}`);
   return res.json();
@@ -116,7 +161,14 @@ export async function getDocument(documentId: string) {
 
 export async function deleteDocument(documentId: string) {
   const res = await albertFetch(`/v1/documents/${documentId}`, { method: 'DELETE' });
-  return res.json();
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Albert DELETE /v1/documents/${documentId} ${res.status}: ${body.slice(0, 300)}`);
+  }
+  if (res.status === 204) return { ok: true };
+  const body = await res.text().catch(() => '');
+  if (!body) return { ok: true };
+  try { return JSON.parse(body); } catch { return { ok: true }; }
 }
 
 // Construit le corps de /v1/search. PURE (testée).
