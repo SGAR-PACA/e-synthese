@@ -1,7 +1,7 @@
 // mastra/test/document-worker.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { processJob, type JobDeps } from '../src/lib/document-worker.js';
+import { buildAlbertChunkMetadata, processJob, type JobDeps } from '../src/lib/document-worker.js';
 import type { DocumentFile } from '../src/lib/db.js';
 
 const baseJob: DocumentFile = {
@@ -52,4 +52,15 @@ test('échec Albert (IO non-OCR) -> markFailed', async () => {
   await processJob(baseJob, deps);
   assert.equal(calls.includes('failed'), true);
   assert.equal(calls.includes('ready'), false);
+});
+
+test('métadonnées des chunks : chaque document conserve sa collection', () => {
+  const first = buildAlbertChunkMetadata('premier.pdf', 270076, 1, 1);
+  const second = buildAlbertChunkMetadata('second.pdf', 123456, 2, 3);
+  const unscoped = buildAlbertChunkMetadata('legacy.pdf', null, 1, 1);
+
+  assert.equal(first.collection_id, '270076');
+  assert.equal(second.collection_id, '123456');
+  assert.notEqual(first.collection_id, second.collection_id);
+  assert.equal(unscoped.collection_id, undefined);
 });
