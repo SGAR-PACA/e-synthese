@@ -64,8 +64,9 @@ export function createRateLimiter(opts: { maxPerWindow: number; windowMs: number
         timer = null;
         pump();
       }, wait + 5);
-      // Ne pas maintenir le process en vie juste pour ce minuteur.
-      (timer as any).unref?.();
+      // Le minuteur doit rester référencé : une promesse Albert en attente doit
+      // toujours pouvoir se résoudre, y compris dans un processus court (CLI,
+      // worker lancé ponctuellement ou test), pas uniquement dans un serveur.
     }
   }
 

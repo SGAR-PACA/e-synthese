@@ -7,6 +7,11 @@ export interface PageHighlights {
   width: number;
   height: number;
   rects: { x: number; y: number; w: number; h: number }[];
+  // Les ancres persistées par highlight-align sont en coordonnées PDF user
+  // space. Les anciennes fonctions de recherche à la volée restent en
+  // coordonnées MuPDF top-left et ne sont pas servies par la visionneuse.
+  coordinateSpace?: 'pdf-user' | 'mupdf-top-left';
+  pdfBounds?: [number, number, number, number];
 }
 
 // Rapport de diagnostic par phrase : où (quelles pages) et combien de fois chaque

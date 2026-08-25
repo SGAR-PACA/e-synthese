@@ -149,6 +149,36 @@ export async function applySchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_document_files_status ON document_files(status);
     CREATE INDEX IF NOT EXISTS idx_document_files_albert ON document_files(albert_document_id);
+    -- Coordonnées de surlignage calculées sur le PDF searchable au moment de
+    -- l'ingestion. La visionneuse ne fait pas de recherche approximative à la
+    -- volée : elle ne sert que les ancres vérifiées ; un manifeste incomplet
+    -- peut donc tout de même fournir un surlignage partiel explicitement signalé.
+    CREATE TABLE IF NOT EXISTS document_highlight_manifests (
+      document_id          TEXT PRIMARY KEY,
+      s3_key_searchable    TEXT NOT NULL,
+      complete             BOOLEAN NOT NULL DEFAULT false,
+      chunk_count          INT NOT NULL DEFAULT 0,
+      verified_chunk_count INT NOT NULL DEFAULT 0,
+      coordinate_space     TEXT NOT NULL DEFAULT 'mupdf-top-left',
+      error                TEXT,
+      created_at           TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    );
+    ALTER TABLE document_highlight_manifests
+      ADD COLUMN IF NOT EXISTS coordinate_space TEXT NOT NULL DEFAULT 'mupdf-top-left';
+    CREATE TABLE IF NOT EXISTS document_chunk_highlights (
+      document_id  TEXT NOT NULL,
+      chunk_id     TEXT NOT NULL,
+      words        INT NOT NULL,
+      matched      INT NOT NULL,
+      matched_tokens INT NOT NULL DEFAULT 0,
+      verified     BOOLEAN NOT NULL DEFAULT false,
+      pages        JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at   TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      PRIMARY KEY (document_id, chunk_id)
+    );
+    ALTER TABLE document_chunk_highlights
+      ADD COLUMN IF NOT EXISTS matched_tokens INT NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_document_chunk_highlights_doc ON document_chunk_highlights(document_id);
     CREATE TABLE IF NOT EXISTS user_ratings (
       id               INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       sub              TEXT NOT NULL,
@@ -829,6 +859,150 @@ export async function markFileFailed(id: string, message: string): Promise<void>
   );
 }
 
+export interface DocumentHighlightManifest {
+  document_id: string;
+  s3_key_searchable: string;
+  complete: boolean;
+  chunk_count: number;
+  verified_chunk_count: number;
+  coordinate_space: string;
+  error: string | null;
+  created_at: string;
+}
+
+export interface DocumentChunkHighlight {
+  document_id: string;
+  chunk_id: string;
+  words: number;
+  matched: number;
+  matched_tokens: number;
+  verified: boolean;
+  pages: any[];
+  created_at: string;
+}
+
+export async function replaceDocumentHighlightAnchors(input: {
+  documentId: string;
+  s3KeySearchable: string;
+  complete: boolean;
+  error?: string | null;
+  anchors: Array<{
+    id?: string;
+    words: number;
+    matched: number;
+    matchedTokens?: number;
+    verified: boolean;
+    pages: any[];
+  }>;
+}): Promise<void> {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM document_chunk_highlights WHERE document_id = $1', [input.documentId]);
+    for (const anchor of input.anchors) {
+      if (!anchor.id) continue;
+      await client.query(
+        `INSERT INTO document_chunk_highlights
+           (document_id, chunk_id, words, matched, matched_tokens, verified, pages)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+        [
+          input.documentId,
+          anchor.id,
+          anchor.words,
+          anchor.matched,
+          anchor.matchedTokens ?? anchor.words,
+          anchor.verified,
+          JSON.stringify(anchor.pages),
+        ],
+      );
+    }
+    await client.query(
+      `INSERT INTO document_highlight_manifests
+         (document_id, s3_key_searchable, complete, chunk_count, verified_chunk_count, coordinate_space, error)
+       VALUES ($1, $2, $3, $4, $5, 'pdf-user', $6)
+       ON CONFLICT (document_id) DO UPDATE SET
+         s3_key_searchable = EXCLUDED.s3_key_searchable,
+         complete = EXCLUDED.complete,
+         chunk_count = EXCLUDED.chunk_count,
+         verified_chunk_count = EXCLUDED.verified_chunk_count,
+         coordinate_space = EXCLUDED.coordinate_space,
+         error = EXCLUDED.error,
+         created_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+      [
+        input.documentId,
+        input.s3KeySearchable,
+        input.complete,
+        input.anchors.length,
+        input.anchors.filter((a) => a.verified).length,
+        input.error ?? null,
+      ],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getDocumentHighlightManifest(
+  documentId: string,
+): Promise<DocumentHighlightManifest | undefined> {
+  const rows = await query<DocumentHighlightManifest>(
+    `SELECT document_id, s3_key_searchable, complete, chunk_count,
+            verified_chunk_count, coordinate_space, error, created_at
+       FROM document_highlight_manifests
+      WHERE document_id = $1`,
+    [documentId],
+  );
+  return rows[0];
+}
+
+export async function getDocumentChunkHighlights(
+  documentId: string,
+  chunkIds: string[],
+): Promise<DocumentChunkHighlight[]> {
+  if (chunkIds.length === 0) return [];
+  return query<DocumentChunkHighlight>(
+    `SELECT document_id, chunk_id, words, matched, matched_tokens, verified, pages, created_at
+       FROM document_chunk_highlights
+      WHERE document_id = $1 AND chunk_id = ANY($2::text[])`,
+    [documentId, chunkIds],
+  );
+}
+
+// Documents prêts dont les ancres n'existent pas encore ou dont la couverture
+// n'a pas été validée. Le worker les traite progressivement pour ne pas faire
+// exploser le quota Albert au redémarrage.
+export async function getDocumentsNeedingHighlightBackfill(limit = 20): Promise<DocumentFile[]> {
+  return query<DocumentFile>(
+    `SELECT df.*
+       FROM document_files df
+       LEFT JOIN document_highlight_manifests hm
+         ON hm.document_id = df.albert_document_id
+        AND hm.s3_key_searchable = df.s3_key_searchable
+      WHERE df.status = 'ready'
+        AND df.albert_document_id IS NOT NULL
+        AND df.s3_key_searchable IS NOT NULL
+        AND (
+          hm.document_id IS NULL
+          OR hm.coordinate_space <> 'pdf-user'
+          OR (
+            hm.complete = false
+            AND (
+              hm.error IS NULL
+              OR hm.error LIKE 'Chunks Albert indisponibles:%'
+            )
+          )
+        )
+      ORDER BY df.updated_at ASC
+      LIMIT $1`,
+    [Math.max(1, Math.min(limit, 100))],
+  );
+}
+
 export async function getDocumentFileByAlbertId(
   albertDocumentId: string,
 ): Promise<DocumentFile | undefined> {
@@ -863,6 +1037,8 @@ export async function getDocumentFilesByFilename(
 export async function deleteDocumentFileByAlbertId(
   albertDocumentId: string,
 ): Promise<DocumentFile | undefined> {
+  await run('DELETE FROM document_chunk_highlights WHERE document_id = $1', [albertDocumentId]);
+  await run('DELETE FROM document_highlight_manifests WHERE document_id = $1', [albertDocumentId]);
   const rows = await query<DocumentFile>(
     `DELETE FROM document_files WHERE albert_document_id = $1 RETURNING *`,
     [albertDocumentId],
