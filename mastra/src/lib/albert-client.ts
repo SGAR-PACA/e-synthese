@@ -194,23 +194,46 @@ export async function createEmbeddings(data: { input: string | string[]; model?:
   return res.json();
 }
 
-// Récupère TOUS les chunks d'un document (pagination Albert). Tolérant aux variantes de schéma.
-export async function getDocumentChunks(documentId: string): Promise<Array<{ id: string; content: string }>> {
+// Récupère TOUS les chunks d'un document (pagination Albert). Cette version est
+// volontairement stricte : une page inaccessible, une réponse non paginée ou
+// un doublon d'ID fait échouer l'opération au lieu de renvoyer une liste
+// tronquée qui pourrait être considérée à tort comme un manifeste complet.
+export async function getDocumentChunksStrict(documentId: string): Promise<Array<{ id: string; content: string }>> {
   const out: Array<{ id: string; content: string }> = [];
+  const seen = new Set<string>();
   let offset = 0;
   const limit = 100;
   for (let guard = 0; guard < 1000; guard++) {
-    const res = await albertFetch(`/v1/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`);
-    if (!res.ok) break;
+    const res = await albertFetchWithRetry(`/v1/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Albert chunks ${documentId} offset=${offset} → HTTP ${res.status}: ${body.slice(0, 240)}`);
+    }
     const json: any = await res.json();
-    const rows: any[] = json.data || json.chunks || [];
+    const rows: unknown = Array.isArray(json) ? json : json?.data ?? json?.chunks;
+    if (!Array.isArray(rows)) throw new Error(`Albert chunks ${documentId} : réponse de pagination invalide`);
+    if (rows.length === 0) break;
     for (const r of rows) {
       const id = r.id ?? r.chunk?.id;
-      const content = r.content ?? r.chunk?.content ?? '';
-      if (id != null) out.push({ id: String(id), content: String(content) });
+      const rawContent = r.content ?? r.chunk?.content;
+      if (id == null) throw new Error(`Albert chunks ${documentId} : chunk sans id à offset=${offset}`);
+      const chunkId = String(id);
+      if (seen.has(chunkId)) throw new Error(`Albert chunks ${documentId} : pagination répétée à offset=${offset}`);
+      if (typeof rawContent !== 'string') {
+        throw new Error(`Albert chunks ${documentId} : contenu invalide pour ${chunkId}`);
+      }
+      seen.add(chunkId);
+      out.push({ id: chunkId, content: rawContent });
     }
     if (rows.length < limit) break;
     offset += limit;
   }
+  if (offset >= 1000 * limit) throw new Error(`Albert chunks ${documentId} : pagination trop longue`);
   return out;
+}
+
+// Alias conservé pour les routes d'administration et les appels existants.
+// Il bénéficie désormais lui aussi de la garantie « pas de liste tronquée ».
+export async function getDocumentChunks(documentId: string): Promise<Array<{ id: string; content: string }>> {
+  return getDocumentChunksStrict(documentId);
 }

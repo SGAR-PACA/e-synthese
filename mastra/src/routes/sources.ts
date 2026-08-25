@@ -4,11 +4,17 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { requireSourceSession } from './sources-auth.js';
 import { verifySourceToken } from '../lib/source-token.js';
-import { getDocumentFileByAlbertId, logAudit, type DocumentFile } from '../lib/db.js';
+import {
+  getDocumentFileByAlbertId,
+  getDocumentHighlightManifest,
+  getDocumentChunkHighlights,
+  logAudit,
+  type DocumentFile,
+} from '../lib/db.js';
 import { resolveAllowedCollections } from '../lib/collection-scope.js';
 import { getPdfStream } from '../lib/storage.js';
-import { getDocumentChunks } from '../lib/albert-client.js';
-import { computeAlignedHighlights, type ChunkAlign } from '../lib/highlight-align.js';
+import type { PageHighlights } from '../lib/highlight.js';
+import type { ChunkAlign } from '../lib/highlight-align.js';
 import { parseUsedParam } from '../lib/highlight-text.js';
 import { getClientIp } from '../lib/middleware.js';
 
@@ -86,17 +92,86 @@ function highlightRateOk(ip: string): boolean {
 // N'est appelé que si HIGHLIGHT_DEBUG=1 (hors prod).
 function buildAlignDebug(documentId: string, report: ChunkAlign[], _unused: boolean) {
   const totWords = report.reduce((s, r) => s + r.words, 0);
-  const totMatched = report.reduce((s, r) => s + r.matched, 0);
+  const totMatched = report.reduce((s, r) => s + (r.matchedTokens ?? (r as any).matched_tokens ?? r.matched), 0);
   const coverage = totWords ? Math.round((totMatched / totWords) * 100) : 0;
   console.log(
     `[highlights:debug] doc=${documentId} chunks=${report.length} ` +
       `mots=${totMatched}/${totWords} couverture=${coverage}%`,
   );
   for (const r of report) {
-    const pct = r.words ? Math.round((r.matched / r.words) * 100) : 0;
-    console.log(`[highlights:debug]   chunk ${r.id ?? '?'}: ${r.matched}/${r.words} mots (${pct}%)`);
+    const matched = r.matchedTokens ?? (r as any).matched_tokens ?? r.matched;
+    const pct = r.words ? Math.round((matched / r.words) * 100) : 0;
+    console.log(`[highlights:debug]   chunk ${r.id ?? '?'}: ${matched}/${r.words} mots (${pct}%)`);
   }
   return { chunks: report.length, totWords, totMatched, coverage, perChunk: report };
+}
+
+function mergeStoredHighlights(rows: Array<{ pages: unknown }>): PageHighlights[] | null {
+  const byPage = new Map<number, {
+    width: number;
+    height: number;
+    pdfBounds: [number, number, number, number];
+    rects: Map<string, { x: number; y: number; w: number; h: number }>;
+  }>();
+  for (const row of rows) {
+    if (!Array.isArray(row.pages)) return null;
+    for (const rawPage of row.pages) {
+      const page = rawPage as any;
+      const bounds = page?.pdfBounds;
+      if (
+        page?.coordinateSpace !== 'pdf-user' ||
+        !Number.isInteger(page?.page) ||
+        !Number.isFinite(page.width) || page.width <= 0 ||
+        !Number.isFinite(page.height) || page.height <= 0 ||
+        !Array.isArray(bounds) || bounds.length !== 4 ||
+        !bounds.every((n: unknown) => Number.isFinite(n)) ||
+        !(bounds[0] < bounds[2] && bounds[1] < bounds[3]) ||
+        !Array.isArray(page.rects)
+      ) {
+        return null;
+      }
+      let target = byPage.get(page.page);
+      if (!target) {
+        target = {
+          width: page.width,
+          height: page.height,
+          pdfBounds: [bounds[0], bounds[1], bounds[2], bounds[3]],
+          rects: new Map(),
+        };
+        byPage.set(page.page, target);
+      }
+      if (
+        target.width !== page.width ||
+        target.height !== page.height ||
+        target.pdfBounds.some((value, i) => value !== bounds[i])
+      ) return null;
+      for (const rawRect of page.rects) {
+        const rect = rawRect as any;
+        if (!Number.isFinite(rect?.x) || !Number.isFinite(rect?.y) || !Number.isFinite(rect?.w) || !Number.isFinite(rect?.h)) {
+          return null;
+        }
+        if (
+          rect.w <= 0 || rect.h <= 0 ||
+          rect.x < bounds[0] || rect.y < bounds[1] ||
+          rect.x + rect.w > bounds[2] || rect.y + rect.h > bounds[3]
+        ) {
+          return null;
+        }
+        const key = `${rect.x}|${rect.y}|${rect.w}|${rect.h}`;
+        target.rects.set(key, { x: rect.x, y: rect.y, w: rect.w, h: rect.h });
+      }
+    }
+  }
+  return [...byPage.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([page, value]) => ({
+      page,
+      width: value.width,
+      height: value.height,
+      coordinateSpace: 'pdf-user' as const,
+      pdfBounds: value.pdfBounds,
+      rects: [...value.rects.values()],
+    }));
 }
 
 export const sourcesRoute = [
@@ -140,43 +215,51 @@ export const sourcesRoute = [
     },
   }),
 
-  // Zones de surlignage (JSON) : texte des chunks cités -> phrases -> quads via mupdf.
+  // Zones de surlignage (JSON) : coordonnées calculées et vérifiées au moment
+  // de l'ingestion. Aucun alignement approximatif n'est effectué à l'ouverture.
   registerApiRoute('/v1/source/:documentId/highlights', {
     method: 'GET',
     handler: async (c) => {
       const acc = await verifyAccess(c);
       if (acc instanceof Response) return acc;
-      // Borne le débit : ce calcul (parsing PDF + alignement) est coûteux et synchrone.
+      // Borne le débit : la lecture des ancres reste protégée même si le calcul
+      // géométrique a déjà été fait lors de l'ingestion.
       if (!highlightRateOk(getClientIp(c))) {
         return c.text('Trop de requêtes, réessayez dans une minute.', 429);
       }
       const documentId = c.req.param('documentId');
       const usedIds = new Set(parseUsedParam(c.req.query('used')));
       try {
-        const allChunks = await getDocumentChunks(documentId);
-        const cited = allChunks.filter((ch) => usedIds.has(ch.id));
-        const citedText = cited.map((ch) => ch.content);
-        if (cited.length === 0) return c.json({ pages: [], citedText }, 200, PRIVATE_NO_STORE);
-        const s3 = await getPdfStream(acc.file.s3_key_searchable!);
-        const bytes = new Uint8Array(await new Response(s3.body).arrayBuffer());
+        if (usedIds.size === 0) {
+          return c.json({ pages: [], citedText: [], highlightStatus: 'unavailable' }, 200, PRIVATE_NO_STORE);
+        }
 
-        // Surlignage par ALIGNEMENT uniquement : chaque chunk cité est aligné en un
-        // BLOC contigu localisé sur le texte du PDF (cacheKey = clé S3 immuable).
-        // On surligne tout le chunk aligné, et RIEN d'autre : plus de repli par
-        // recherche de phrases (page.search), qui remontait toutes les occurrences
-        // et surlignait des doublons hors du chunk cité.
-        const aligned = computeAlignedHighlights(bytes, cited, acc.file.s3_key_searchable ?? undefined);
-        const pages = aligned.pages;
+        const manifest = await getDocumentHighlightManifest(documentId);
+        // La couverture est évaluée chunk par chunk. Un autre chunk du même
+        // document peut être difficile (tableau/colonne) sans invalider un
+        // chunk cité qui, lui, a été vérifié sur le PDF exact.
+        if (!manifest || manifest.coordinate_space !== 'pdf-user' || manifest.s3_key_searchable !== acc.file.s3_key_searchable) {
+          return c.json({ pages: [], citedText: [], highlightReady: false, highlightStatus: 'unavailable' }, 200, PRIVATE_NO_STORE);
+        }
+        const anchors = await getDocumentChunkHighlights(documentId, [...usedIds]);
+        const verifiedAnchors = anchors.filter((a) => a.verified);
+        const pages = mergeStoredHighlights(verifiedAnchors);
+        if (!pages || pages.length === 0) {
+          return c.json({ pages: [], citedText: [], highlightReady: false, highlightStatus: 'unavailable' }, 200, PRIVATE_NO_STORE);
+        }
+        const highlightStatus = anchors.length === usedIds.size && verifiedAnchors.length === usedIds.size
+          ? 'complete'
+          : 'partial';
 
         // Mode debug (env HIGHLIGHT_DEBUG=1, jamais en prod) : couverture par chunk.
         if (process.env.HIGHLIGHT_DEBUG === '1') {
-          const debug = buildAlignDebug(documentId, aligned.report, false);
-          return c.json({ pages, citedText, debug }, 200, PRIVATE_NO_STORE);
+          const debug = buildAlignDebug(documentId, anchors, false);
+          return c.json({ pages, citedText: [], highlightReady: highlightStatus === 'complete', highlightStatus, debug }, 200, PRIVATE_NO_STORE);
         }
-        return c.json({ pages, citedText }, 200, PRIVATE_NO_STORE);
+        return c.json({ pages, citedText: [], highlightReady: highlightStatus === 'complete', highlightStatus }, 200, PRIVATE_NO_STORE);
       } catch (err) {
         console.error('[sources] highlights échec:', (err as Error).message);
-        return c.json({ pages: [], citedText: [] });
+        return c.json({ pages: [], citedText: [], highlightStatus: 'unavailable' }, 200, PRIVATE_NO_STORE);
       }
     },
   }),

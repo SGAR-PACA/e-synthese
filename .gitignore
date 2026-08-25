@@ -22,6 +22,7 @@ data/
 .vscode/
 .idea/
 *.log
+__pycache__/
 
 # Specs/plans de travail (locaux) + scratch d'orchestration — non versionnés
 docs/specs/
