@@ -1,18 +1,12 @@
 import { Agent } from '@mastra/core/agent';
 import { getConfig } from '../../lib/config.js';
-import { REGLES_REDACTION } from '../agents/rag-agent.js';
 import type { RagChunk } from '../../lib/db.js';
-
-const INSTRUCTIONS = `Tu es un assistant IA de l'administration française (E-Synthèse, SGAR PACA).
-Réponds EN FRANÇAIS à la question en t'appuyant UNIQUEMENT sur les passages fournis.
-Si les passages ne contiennent pas l'information, dis-le clairement — n'invente rien.
-
-${REGLES_REDACTION}`;
+import { resolveRagSystemPrompt } from './system-prompt.js';
 
 export const writerAgent = new Agent({
   id: 'rag-writer',
   name: 'E-Synthèse Writer',
-  instructions: INSTRUCTIONS,
+  instructions: resolveRagSystemPrompt,
   model: async () => {
     const model = (await getConfig()).llmModel || 'openweight-large';
     return `albert/albert/${model}` as any;

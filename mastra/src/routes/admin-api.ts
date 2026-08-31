@@ -11,9 +11,135 @@ import type { RagChunk } from '../lib/db.js';
 import { parseCitedSources } from '../lib/cited-sources.js';
 import { configureAlbertRateLimit } from '../lib/albert-limiter.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
+import type { AppConfig } from '../lib/config.js';
+import type { Agent } from '@mastra/core/agent';
 
 await initConfigFromEnv();
 configureAlbertRateLimit((await getConfig()).albertMaxRpm);
+
+async function executePersistentPipelineTest(args: {
+  testId: number;
+  query: string;
+  withJudge: boolean;
+  planner: Agent;
+  writer: Agent;
+  config: AppConfig;
+  allowedCollections: number[] | null;
+}): Promise<void> {
+  const { testId, query, withJudge, planner, writer, config, allowedCollections } = args;
+  try {
+    await db.updatePipelineTestRun(testId, 'running');
+    const writerSettings = {
+      temperature: config.temperature,
+      topP: config.topP < 1 ? config.topP : undefined,
+      maxOutputTokens: config.maxOutputTokens,
+    };
+    const run = await runRagCore({ question: query, planner, writer, writerSettings, allowedCollections, config });
+    const queryCount = run.plan.type === 'recherche' ? run.plan.requetes.length : 0;
+    const pipelineRequestBudget = run.plan.type === 'recherche'
+      ? 1 + queryCount + (config.useRerank ? 1 : 0) + 1
+      : 1;
+    const params = {
+      generation: {
+        llmModel: config.llmModel,
+        albertMaxRpm: config.albertMaxRpm,
+        temperature: config.temperature,
+        topP: config.topP,
+        maxOutputTokens: config.maxOutputTokens,
+        maxSearchQueries: config.maxSearchQueries,
+        useRerank: config.useRerank,
+        searchWideK: config.searchWideK,
+        finalK: config.finalK,
+        rerankMinScore: config.rerankMinScore,
+        searchK: config.searchK,
+        minScore: config.minScore,
+      },
+      judge: {
+        judgeModel: config.judgeModel,
+        temperature: config.judgeTemperature,
+        maxCompletionTokens: config.judgeMaxCompletionTokens,
+        evalWideK: config.evalWideK,
+        evalWideSearch: config.evalWideSearch,
+      },
+      collections: allowedCollections,
+      requestBudget: {
+        pipeline: pipelineRequestBudget,
+        judge: run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0,
+        total: pipelineRequestBudget + (run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0),
+      },
+    };
+    const chunkView = (ch: RagChunk) => ({ name: ch.name, score: ch.score, content: ch.content });
+
+    if (run.plan.type === 'direct') {
+      await db.updatePipelineTestRun(testId, 'completed', {
+        query,
+        params,
+        plan: { type: 'direct' },
+        usedChunks: [],
+        wideChunks: [],
+        answer: run.answer,
+        scores: [],
+        isRefusal: false,
+        runId: null,
+        note: 'Question conversationnelle (plan direct) : pas de recherche ni de notation.',
+      });
+      return;
+    }
+
+    let scoreResult: { scores: any[]; isRefusal: boolean; runId: number | null; used: RagChunk[]; wide: RagChunk[] };
+    if (!withJudge) {
+      const runId = await db.insertRagRun({
+        source: 'test',
+        question: query,
+        answer: run.answer,
+        usedChunks: run.chunks,
+        wideK: 0,
+        genModel: config.llmModel,
+        isRefusal: isRefusal(run.answer),
+      });
+      scoreResult = { scores: [], isRefusal: isRefusal(run.answer), runId, used: run.chunks, wide: [] };
+    } else {
+      try {
+        scoreResult = await scoreRun({
+          question: query,
+          answer: run.answer,
+          usedChunks: run.chunks,
+          source: 'test',
+          genModel: config.llmModel,
+          allowedCollections,
+        });
+      } catch (err: any) {
+        scoreResult = {
+          scores: [{ metric: 'erreur', score: 0, reason: String(err?.message || err) }],
+          isRefusal: false,
+          runId: null,
+          used: run.chunks,
+          wide: [],
+        };
+      }
+    }
+
+    await db.updatePipelineTestRun(testId, 'completed', {
+      query,
+      params,
+      plan: { type: 'recherche', requetes: run.plan.requetes },
+      usedChunks: run.chunks.map(chunkView),
+      wideChunks: (scoreResult.wide || []).map(chunkView),
+      answer: run.answer,
+      finishReason: run.finishReason,
+      scores: scoreResult.scores,
+      isRefusal: scoreResult.isRefusal,
+      runId: scoreResult.runId,
+    });
+  } catch (err: any) {
+    const message = String(err?.message || err).slice(0, 2000);
+    try {
+      await db.updatePipelineTestRun(testId, 'failed', null, message);
+    } catch (persistErr) {
+      console.error(`[test-pipeline] impossible de persister l'échec du test ${testId}:`, persistErr);
+    }
+  }
+}
 
 export const adminApiRoute = [
   registerApiRoute('/admin/auth-status', {
@@ -257,134 +383,57 @@ export const adminApiRoute = [
       if (csrfError) return csrfError;
 
       const body = await c.req.json();
-      const query = body?.query;
-      const withJudge = body?.withJudge !== false;
-      if (!query) {
-        return c.json({ error: 'query is required' }, 400);
-      }
+      const query = typeof body?.query === 'string' ? body.query.trim() : '';
+      const withJudge = body?.withJudge === true;
+      if (!query) return c.json({ error: 'query is required' }, 400);
+      if (query.length > 4000) return c.json({ error: 'query is too long' }, 400);
 
+      const testRun = await db.createPipelineTestRun({
+        userId: authResult.user.id,
+        query,
+        withJudge,
+      });
       const config = await getConfig();
-      const ip = getClientIp(c);
-
-      // Périmètre de recherche IDENTIQUE au chat : admin = accès non restreint (null → toutes
-      // les collections, comme le repli chat), non-admin = ses collections autorisées (groupes).
-      const allowedCollections: number[] | null =
-        authResult.user.role === 'admin' ? null : authResult.collections;
-
-      // Pipeline FIDÈLE au chat de production (planif → pêche large → rerank → rédaction),
-      // via la fonction partagée : tout paramètre réglé dans l'admin agit ici à l'identique.
+      const allowedCollections: number[] | null = authResult.user.role === 'admin' ? null : authResult.collections;
       const planner = c.get('mastra').getAgent('plannerAgent');
       const writer = c.get('mastra').getAgent('writerAgent');
-      const writerSettings = {
-        temperature: config.temperature,
-        topP: config.topP < 1 ? config.topP : undefined,
-        maxOutputTokens: config.maxOutputTokens,
-      };
+      await db.logAudit(getClientIp(c), 'TEST_PIPELINE', authResult.user.id, `test=${testRun.id} query="${query}"`);
 
-      let run;
-      try {
-        run = await runRagCore({ question: query, planner, writer, writerSettings, allowedCollections, config });
-      } catch (err: any) {
-        return c.json({ error: `Pipeline échoué : ${err?.message || err}` }, 500);
-      }
-
-      await db.logAudit(ip, 'TEST_PIPELINE', authResult.user.id, `query="${query}"`);
-
-      const queryCount = run.plan.type === 'recherche' ? run.plan.requetes.length : 0;
-      const pipelineRequestBudget = run.plan.type === 'recherche'
-        ? 1 + queryCount + (config.useRerank ? 1 : 0) + 1
-        : 1;
-
-      // Snapshot des paramètres RÉELLEMENT appliqués (pour le réglage fin + export JSON).
-      const params = {
-        generation: {
-          llmModel: config.llmModel,
-          albertMaxRpm: config.albertMaxRpm,
-          temperature: config.temperature,
-          topP: config.topP,
-          maxOutputTokens: config.maxOutputTokens,
-          maxSearchQueries: config.maxSearchQueries,
-          useRerank: config.useRerank,
-          searchWideK: config.searchWideK,
-          finalK: config.finalK,
-          rerankMinScore: config.rerankMinScore,
-          searchK: config.searchK,
-          minScore: config.minScore,
-        },
-        judge: {
-          judgeModel: config.judgeModel,
-          temperature: config.judgeTemperature,
-          maxCompletionTokens: config.judgeMaxCompletionTokens,
-          evalWideK: config.evalWideK,
-          evalWideSearch: config.evalWideSearch,
-        },
-        collections: allowedCollections,
-        requestBudget: {
-          pipeline: pipelineRequestBudget,
-          judge: run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0,
-          total: pipelineRequestBudget + (run.plan.type === 'recherche' && withJudge ? 1 + (config.evalWideSearch ? 1 : 0) : 0),
-        },
-      };
-
-      const chunkView = (ch: RagChunk) => ({ name: ch.name, score: ch.score, content: ch.content });
-
-      // Cas direct (conversationnel) : pas de RAG ni de notation.
-      if (run.plan.type === 'direct') {
-        return c.json({
-          query,
-          params,
-          plan: { type: 'direct' },
-          usedChunks: [],
-          wideChunks: [],
-          answer: run.answer,
-          scores: [],
-          isRefusal: false,
-          runId: null,
-          note: 'Question conversationnelle (plan direct) : pas de recherche ni de notation.',
-        });
-      }
-
-      // Notation SYNCHRONE (banc de test) : on ATTEND les notes du juge pour les afficher,
-      // contrairement au chat live (fire-and-forget). Le résultat est aussi persisté (source 'test').
-      let scoreResult: { scores: any[]; isRefusal: boolean; runId: number | null; used: RagChunk[]; wide: RagChunk[] };
-      if (!withJudge) {
-        // Le banc peut aussi constituer un log non noté, à reprendre ensuite
-        // manuellement depuis la page Évaluation.
-        const runId = await db.insertRagRun({
-          source: 'test',
-          question: query,
-          answer: run.answer,
-          usedChunks: run.chunks,
-          wideK: 0,
-          genModel: config.llmModel,
-          isRefusal: isRefusal(run.answer),
-        });
-        scoreResult = { scores: [], isRefusal: isRefusal(run.answer), runId, used: run.chunks, wide: [] };
-      } else try {
-        scoreResult = await scoreRun({
-          question: query,
-          answer: run.answer,
-          usedChunks: run.chunks,
-          source: 'test',
-          genModel: config.llmModel,
-          allowedCollections,
-        });
-      } catch (err: any) {
-        scoreResult = { scores: [{ metric: 'erreur', score: 0, reason: String(err?.message || err) }], isRefusal: false, runId: null, used: run.chunks, wide: [] };
-      }
-
-      return c.json({
+      // L'exécution est volontairement détachée de la requête HTTP : fermer ou
+      // quitter la page n'annule pas le test. Le résultat est écrit dans Postgres.
+      void executePersistentPipelineTest({
+        testId: testRun.id,
         query,
-        params,
-        plan: { type: 'recherche', requetes: run.plan.requetes },
-        usedChunks: run.chunks.map(chunkView),
-        wideChunks: (scoreResult.wide || []).map(chunkView),
-        answer: run.answer,
-        finishReason: run.finishReason,
-        scores: scoreResult.scores,
-        isRefusal: scoreResult.isRefusal,
-        runId: scoreResult.runId,
-      });
+        withJudge,
+        planner,
+        writer,
+        config,
+        allowedCollections,
+      }).catch((err) => console.error(`[test-pipeline] erreur détachée du test ${testRun.id}:`, err));
+
+      return c.json(testRun, 202);
+    },
+  }),
+
+  registerApiRoute('/admin/test-pipeline', {
+    method: 'GET',
+    handler: async (c) => {
+      const authResult = await requireAuth(c);
+      if (authResult instanceof Response) return authResult;
+      const limit = Number.parseInt(c.req.query('limit') || '30', 10);
+      return c.json({ items: await db.listPipelineTestRuns(authResult.user.id, limit) });
+    },
+  }),
+
+  registerApiRoute('/admin/test-pipeline/:id', {
+    method: 'GET',
+    handler: async (c) => {
+      const authResult = await requireAuth(c);
+      if (authResult instanceof Response) return authResult;
+      const id = Number.parseInt(c.req.param('id'), 10);
+      if (!Number.isInteger(id)) return c.json({ error: 'Test introuvable' }, 404);
+      const testRun = await db.getPipelineTestRun(id, authResult.user.id);
+      return testRun ? c.json(testRun) : c.json({ error: 'Test introuvable' }, 404);
     },
   }),
 
@@ -427,6 +476,14 @@ export const adminApiRoute = [
       const updates: Record<string, any> = {};
       for (const key of allowed) {
         if (body[key] !== undefined) updates[key] = body[key];
+      }
+
+      if (updates.ragPromptTemplate !== undefined) {
+        const prompt = String(updates.ragPromptTemplate).trim();
+        if (prompt.length < 30) {
+          return c.json({ error: 'Le prompt système RAG doit contenir au moins 30 caractères.' }, 400);
+        }
+        updates.ragPromptTemplate = prompt;
       }
 
       if (updates.judgeModel !== undefined || updates.llmModel !== undefined) {

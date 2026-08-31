@@ -23,15 +23,18 @@ export function verifyCookieValue<T = any>(value: string, key: string, context =
 }
 
 // La session de la visionneuse n'est plus un JWT/cookie auto-validant : elle est
-// opaque et doit exister dans `source_sessions` côté serveur. Une durée courte
-// force une nouvelle autorisation silencieuse périodique et limite la fenêtre
-// d'un changement de groupe Keycloak non encore reflété dans la session.
-const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
-const MIN_SESSION_TTL_MS = 60 * 1000;
-const MAX_SESSION_TTL_MS = 30 * 60 * 1000;
+// opaque et doit exister dans `source_sessions` côté serveur. Elle suit la durée
+// d'une journée de travail afin que la consultation d'une source ne coupe pas
+// l'utilisateur en cours de session. Les logouts front/back-channel continuent
+// de la révoquer immédiatement.
+const DEFAULT_SESSION_TTL_MS = 10 * 60 * 60 * 1000;
+// Le minimum corrige aussi les déploiements existants qui ont conservé
+// l'ancienne durée de 15 minutes depuis le précédent .env d'exemple.
+const MIN_SESSION_TTL_MS = 10 * 60 * 60 * 1000;
+const MAX_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function sourceSessionTtlMs(): number {
-  const raw = Number(process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS ?? '900');
+  const raw = Number(process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS ?? '36000');
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_SESSION_TTL_MS;
   return Math.max(MIN_SESSION_TTL_MS, Math.min(Math.floor(raw * 1000), MAX_SESSION_TTL_MS));
 }

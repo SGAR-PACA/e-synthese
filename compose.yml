@@ -92,10 +92,9 @@ services:
       - MASTRA_OIDC_REDIRECT_URI=${MASTRA_OIDC_REDIRECT_URI:-https://${DOMAIN_FRONT}/v1/source/callback}
       - MASTRA_RP_COOKIE_KEY=${MASTRA_RP_COOKIE_KEY:?MASTRA_RP_COOKIE_KEY requis}
       - MASTRA_SOURCE_LINK_KEY=${MASTRA_SOURCE_LINK_KEY:-}
-      # Session opaque côté serveur : 15 min par défaut, au plus 30 min. Au-delà,
-      # la visionneuse refait une autorisation OIDC silencieuse et récupère les
-      # groupes Keycloak à jour.
-      - MASTRA_SOURCE_SESSION_TTL_SECONDS=${MASTRA_SOURCE_SESSION_TTL_SECONDS:-900}
+      # Session opaque côté serveur : 10 h par défaut (journée de travail).
+      # Une déconnexion volontaire ou Keycloak la révoque toujours immédiatement.
+      - MASTRA_SOURCE_SESSION_TTL_SECONDS=${MASTRA_SOURCE_SESSION_TTL_SECONDS:-36000}
       # --- Notation utilisateur (widget 5 étoiles) ---
       # MASTRA_RATING_AUDIENCE doit valoir l'id du client public Keycloak (mastra-rating-spa),
       # sinon requireRatingUser renvoie 503 « Notation non configurée ». Réutilise MASTRA_OIDC_ISSUER
@@ -267,10 +266,8 @@ services:
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY requis}
       - DJANGO_CSRF_TRUSTED_ORIGINS=https://${DOMAIN_FRONT}
       - LLM_CONFIGURATION_FILE_PATH=/tmp/llm-custom.json
-      # Ne laisse pas la session Django survivre au timeout SSO Keycloak (30 min
-      # dans le realm). À expiration, le front repasse par /users/me puis affiche
-      # la connexion ; le silent-login ne réussit que si Keycloak a encore son SSO.
-      - SESSION_COOKIE_AGE=${CONVERSATIONS_SESSION_COOKIE_AGE:-1800}
+      # Session applicative alignée sur la journée de travail Keycloak.
+      - SESSION_COOKIE_AGE=${CONVERSATIONS_SESSION_COOKIE_AGE:-36000}
 
       # Mail
       - DJANGO_EMAIL_BRAND_NAME=${DJANGO_EMAIL_BRAND_NAME:-E-Synthèse}
@@ -297,6 +294,10 @@ services:
       # Stocke l'access token OIDC en session → le patch le forwarde à Mastra
       # (X-User-Token) pour le cloisonnement RAG par groupe.
       - OIDC_STORE_ACCESS_TOKEN=True
+      # Le middleware OIDC de l'image dérivée renouvelle le jeton court en
+      # arrière-plan. La clé Fernet est dérivée du DJANGO_SECRET_KEY stable au
+      # démarrage, sans ajouter un nouveau secret de déploiement.
+      - OIDC_STORE_REFRESH_TOKEN=True
 
       # Pour envsubst (le command ci-dessous)
       - PROXY_API_KEY=${PROXY_API_KEY}
@@ -321,7 +322,18 @@ services:
       - -c
       - |
         set -e
-        # 1. Rendu du template LLM via Python (placeholder __PROXY_API_KEY__).
+        # 1. Migration sûre des anciens environnements restés à 1800 s : une
+        # valeur invalide ou inférieure à 10 h est relevée automatiquement.
+        case "$${SESSION_COOKIE_AGE:-}" in
+          ''|*[!0-9]*) export SESSION_COOKIE_AGE=36000 ;;
+          *) [ "$$SESSION_COOKIE_AGE" -ge 36000 ] || export SESSION_COOKIE_AGE=36000 ;;
+        esac
+        # 2. Clé Fernet stable pour chiffrer le refresh token dans la session.
+        export OIDC_STORE_REFRESH_TOKEN_KEY="$$(python3 -c "
+        import base64, hashlib, os
+        print(base64.urlsafe_b64encode(hashlib.sha256(os.environ['DJANGO_SECRET_KEY'].encode()).digest()).decode())
+        ")"
+        # 3. Rendu du template LLM via Python (placeholder __PROXY_API_KEY__).
         python3 -c "
         import os
         template = open('/tmpl/llm.json.tpl').read()
@@ -329,13 +341,13 @@ services:
         open('/tmp/llm-custom.json', 'w').write(output)
         print('llm-custom.json rendu dans /tmp/')
         "
-        # 2. Migrations Django (idempotent : skip si déjà à jour)
+        # 4. Migrations Django (idempotent : skip si déjà à jour)
         # depends_on: postgresql healthy garantit que la DB est joignable.
         # --no-input pour ne pas hanger sur une question interactive.
         echo "[entrypoint] Running Django migrations..."
         cd /app && python manage.py migrate --no-input
         echo "[entrypoint] Migrations OK."
-        # 3. Lancer l'entrypoint d'origine (qui exec uvicorn)
+        # 5. Lancer l'entrypoint d'origine (qui exec uvicorn)
         exec /usr/local/bin/entrypoint "$$@"
       - --
     command:
@@ -541,6 +553,25 @@ services:
         "$$KCADM" update realms/$$REALM --config "$$CFG" \
           -s internationalizationEnabled=true -s 'supportedLocales=["fr","en"]' -s defaultLocale=fr
         echo "Langue par defaut = francais."
+        # Sessions interactives : une journée de travail. Le logout explicite
+        # reste immédiat ; ces valeurs évitent seulement l'expiration en activité.
+        "$$KCADM" update realms/$$REALM --config "$$CFG" \
+          -s ssoSessionIdleTimeout=36000 -s ssoSessionMaxLifespan=36000 \
+          -s ssoSessionIdleTimeoutRememberMe=36000 -s ssoSessionMaxLifespanRememberMe=36000 \
+          -s accessTokenLifespanForImplicitFlow=36000
+        echo "Sessions Keycloak alignees sur 10 heures."
+        # Désactive l'OTP du flux navigateur, y compris sur un realm déjà initialisé.
+        # L'import du realm ne rejoue pas sur un volume Keycloak existant.
+        OTP_EXECUTION=$$("$$KCADM" get authentication/flows/forms/executions --config "$$CFG" -r "$$REALM" --fields id,flowAlias,priority --format csv --noquotes 2>/dev/null | awk -F, '$$2 == "Browser - Conditional OTP" { print $$1 "|" $$3; exit }' || true)
+        if [ -n "$$OTP_EXECUTION" ]; then
+          OTP_ID=$$(printf '%s\n' "$$OTP_EXECUTION" | cut -d'|' -f1)
+          OTP_PRIORITY=$$(printf '%s\n' "$$OTP_EXECUTION" | cut -d'|' -f2)
+          "$$KCADM" update authentication/flows/forms/executions --config "$$CFG" -r "$$REALM" \
+            -s id="$$OTP_ID" -s requirement=DISABLED -s priority="$$OTP_PRIORITY"
+          echo "OTP du flux navigateur desactive."
+        else
+          echo "Flux navigateur OTP deja absent ou introuvable."
+        fi
         # Crée le client public s'il est absent.
         ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' || true)
         if [ -z "$$ID" ]; then

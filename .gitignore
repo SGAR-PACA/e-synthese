@@ -30,3 +30,7 @@ docs/plans/
 .superpowers/
 .playwright-mcp/
 docs/mastra-tuning-procedure.md
+
+# Banc de test : questions/réponses attendues et résultats — JAMAIS commités
+scripts/bench/questions.json
+scripts/bench/results/

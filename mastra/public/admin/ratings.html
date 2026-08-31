@@ -120,7 +120,7 @@ details[open] > .chunk-summary::before { transform:rotate(90deg); color:var(--ac
 
   <section class="charts">
     <div class="card"><h3>Répartition des notes</h3><div id="dist"></div></div>
-    <div class="card"><h3>Moyenne dans le temps</h3><svg class="spark" id="spark" viewBox="0 0 600 150" preserveAspectRatio="none" role="img" aria-label="Évolution de la note moyenne"></svg></div>
+    <div class="card"><h3>Moyenne quotidienne — 30 derniers jours</h3><svg class="spark" id="spark" viewBox="0 0 600 175" preserveAspectRatio="none" role="img" aria-label="Évolution quotidienne de la note moyenne sur les 30 derniers jours"></svg></div>
   </section>
 
   <div class="toolbar">
@@ -272,20 +272,29 @@ function renderSpark(trend) {
     el.innerHTML = '<text x="300" y="80" text-anchor="middle" fill="#929299" font-size="12">Données insuffisantes</text>';
     return;
   }
-  var W = 600, H = 150, pad = 18, n = trend.length;
+  var W = 600, H = 175, padLeft = 25, padRight = 10, padTop = 10, padBottom = 30, n = trend.length;
   var pts = trend.map(function(t) { return t.avg; });
-  function x(i) { return pad + i * (W - 2 * pad) / (n - 1); }
-  function y(v) { return H - pad - (v - 1) / 4 * (H - 2 * pad); }
+  function x(i) { return padLeft + i * (W - padLeft - padRight) / (n - 1); }
+  function y(v) { return H - padBottom - (v - 1) / 4 * (H - padTop - padBottom); }
+  function dateLabel(iso) {
+    var parts = String(iso || '').split('-');
+    return parts.length === 3 ? parts[2] + '/' + parts[1] : '';
+  }
   var line = pts.map(function(v, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
-  var area = line + ' L' + x(n - 1).toFixed(1) + ' ' + (H - pad) + ' L' + x(0).toFixed(1) + ' ' + (H - pad) + ' Z';
+  var area = line + ' L' + x(n - 1).toFixed(1) + ' ' + (H - padBottom) + ' L' + x(0).toFixed(1) + ' ' + (H - padBottom) + ' Z';
   var dots = pts.map(function(v, i) {
-    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="3" fill="#000091"/>';
+    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="3" fill="#000091"><title>' + dateLabel(trend[i].date) + ' : ' + Number(v).toFixed(2) + '/5 (' + Number(trend[i].count) + ' note(s))</title></circle>';
   }).join('');
   var grid = '';
   [1, 2, 3, 4, 5].forEach(function(v) {
-    grid += '<line x1="' + pad + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - pad) + '" y2="' + y(v).toFixed(1) + '" stroke="rgba(20,20,60,0.08)"/>';
+    grid += '<line x1="' + padLeft + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - padRight) + '" y2="' + y(v).toFixed(1) + '" stroke="rgba(20,20,60,0.08)"/>';
     grid += '<text x="2" y="' + (y(v) + 4).toFixed(1) + '" fill="#929299" font-size="10">' + v + '</text>';
   });
+  var labelIndexes = [0, Math.floor((n - 1) / 2), n - 1].filter(function(v, i, a) { return a.indexOf(v) === i; });
+  var labels = labelIndexes.map(function(i) {
+    var anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
+    return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '" fill="#929299" font-size="10">' + dateLabel(trend[i].date) + '</text>';
+  }).join('');
   el.innerHTML =
     '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
     '<stop offset="0" stop-color="#000091" stop-opacity="0.16"/>' +
@@ -294,7 +303,7 @@ function renderSpark(trend) {
     grid +
     '<path d="' + area + '" fill="url(#g)"/>' +
     '<path d="' + line + '" fill="none" stroke="#000091" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
-    dots;
+    dots + labels;
 }
 
 /* ---- Filtrage ---- */

@@ -17,18 +17,20 @@ USER root:root
 # Nouveau module : ContextVar portant le token utilisateur pour la requête.
 COPY chat/user_token_context.py /app/chat/user_token_context.py
 
-# Patches (base.py = injection du header ; pydantic_ai.py = pose du ContextVar).
+# Patches (forward du token utilisateur + renouvellement OIDC automatique).
 COPY patches/ /tmp/esynthese-patches/
 RUN set -eux; \
     apk add --no-cache patch; \
     cd /app; \
     patch -p1 < /tmp/esynthese-patches/base.py.patch; \
     patch -p1 < /tmp/esynthese-patches/pydantic_ai.py.patch; \
+    patch -p1 < /tmp/esynthese-patches/settings.py.patch; \
     apk del patch; \
     rm -rf /tmp/esynthese-patches; \
     python -c "import ast; \
 ast.parse(open('chat/agents/base.py').read()); \
 ast.parse(open('chat/clients/pydantic_ai.py').read()); \
+ast.parse(open('conversations/settings.py').read()); \
 ast.parse(open('chat/user_token_context.py').read())"
 
 # Retour à l'utilisateur non-root de l'image de base (uid 1001).
