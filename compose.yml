@@ -572,6 +572,22 @@ services:
         else
           echo "Flux navigateur OTP deja absent ou introuvable."
         fi
+        # Double authentification : ni proposée ni exigée, même après redéploiement.
+        # 1. Désactive l'action requise "Configure OTP" (couvre les futurs utilisateurs ;
+        #    une action désactivée n'est plus exécutée même si elle reste assignée à un user).
+        "$$KCADM" update "authentication/required-actions/CONFIGURE_TOTP" --config "$$CFG" -r "$$REALM" \
+          -s enabled=false -s defaultAction=false || echo "Action Configure OTP introuvable (deja absente)."
+        echo "Action requise Configure OTP desactivee."
+        # 2. Supprime les credentials OTP déjà enrôlés par les utilisateurs existants
+        #    (idempotent : ne touche que les credentials de type otp).
+        for USER_ID in $$("$$KCADM" get users --config "$$CFG" -r "$$REALM" -q max=2000 --fields id --format csv --noquotes 2>/dev/null | tr -d '\r'); do
+          for CRED_ID in $$("$$KCADM" get users/$$USER_ID/credentials --config "$$CFG" -r "$$REALM" --fields id,type --format csv --noquotes 2>/dev/null | tr -d '\r' | awk -F, '$$2 == "otp" { print $$1 }'); do
+            "$$KCADM" delete users/$$USER_ID/credentials/$$CRED_ID --config "$$CFG" -r "$$REALM" \
+              && echo "Credential OTP supprime pour l'utilisateur $$USER_ID." \
+              || echo "Echec de suppression du credential OTP de $$USER_ID (a verifier en console)."
+          done
+        done
+        echo "Double authentification purgee (existants et futurs utilisateurs)."
         # Crée le client public s'il est absent.
         ID=$$("$$KCADM" get clients --config "$$CFG" -r "$$REALM" -q clientId="$$CID" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' || true)
         if [ -z "$$ID" ]; then
