@@ -15,7 +15,7 @@ import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
 import { getDocumentFilesByFilename, getDocumentFileByAlbertId, insertRagRun } from '../lib/db.js';
 import { pickDocumentFile } from '../lib/source-resolve.js';
-import { injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
+import { buildSourcesBlock, injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
 import { signSourceToken } from '../lib/source-token.js';
 
@@ -393,12 +393,32 @@ function pipelineSSE(args: PipelineSSEArgs): ReadableStream<Uint8Array> {
         );
         if (tail.length > 0) send(controller, { content: tail });
 
+        // Si le modèle a oublié le bloc malgré le prompt, l'ajouter depuis les
+        // chunks réellement retenus. En streaming il doit être émis seulement à
+        // la fin, une fois que l'on sait qu'aucun bloc n'est arrivé.
+        const fallbackBlock = !suppress && !splitter.sawSources
+          ? buildSourcesBlock(chunks)
+          : '';
+        const fallbackText = fallbackBlock ? `\n\n${fallbackBlock}` : '';
+        if (fallbackText) {
+          send(controller, {
+            content: sign ? injectSourceLinks(fallbackText, chunks, sign) : fallbackText,
+          });
+        }
+
         send(controller, {}, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
 
         // Journalisation + notation live sur le texte complet NON lié (format Sources préservé).
         // Elle est détachée après l'envoi de [DONE] pour ne pas ralentir le streaming.
-        void logLiveRunAndMaybeScore(question, chunks, fullText, config, model, allowedCollections);
+        void logLiveRunAndMaybeScore(
+          question,
+          chunks,
+          fallbackText ? `${fullText.trimEnd()}${fallbackText}` : fullText,
+          config,
+          model,
+          allowedCollections,
+        );
       } catch (err: any) {
         send(controller, { content: `[error: ${err?.message || 'stream failed'}]` }, 'stop');
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));

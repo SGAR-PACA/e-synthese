@@ -1,7 +1,7 @@
 // mastra/test/sources-linker.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { injectSourceLinks } from '../src/lib/sources-linker.js';
+import { buildSourcesBlock, ensureSourcesBlock, injectSourceLinks } from '../src/lib/sources-linker.js';
 import type { RagChunk } from '../src/lib/db.js';
 
 const sign = (documentId: string, chunkIds: string[]) => `used=${chunkIds.join(',')}&sig=X`;
@@ -64,4 +64,26 @@ test('collision de noms : deux chunks de documents différents → lien vers le 
   assert.match(out, /\/v1\/source\/doc-1\?used=c1&sig=X/);
   assert.doesNotMatch(out, /doc-2/);
   assert.doesNotMatch(out, /c2/);
+});
+
+test('filet sources : ajoute les documents dédupliqués si le modèle oublie le bloc', () => {
+  const chunks = [
+    { name: 'A.pdf', content: 'a' },
+    { name: 'A.pdf', content: 'b' },
+    { name: 'B.pdf', content: 'c' },
+  ];
+  assert.equal(
+    ensureSourcesBlock('Réponse documentée.', chunks),
+    'Réponse documentée.\n\n**Sources :**\n- Source 1 : *A.pdf*\n- Source 2 : *B.pdf*',
+  );
+});
+
+test('filet sources : conserve sans doublon un bloc déjà produit par le modèle', () => {
+  const answer = 'Réponse.\n\n**Sources :**\n- Source 1 : *A.pdf*';
+  assert.equal(ensureSourcesBlock(answer, [{ name: 'A.pdf', content: 'a' }]), answer);
+});
+
+test('filet sources : aucun chunk ne fabrique une source artificielle', () => {
+  assert.equal(buildSourcesBlock([]), '');
+  assert.equal(ensureSourcesBlock('Réponse directe.', []), 'Réponse directe.');
 });

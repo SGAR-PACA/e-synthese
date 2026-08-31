@@ -268,22 +268,26 @@ function renderSpark(trend) {
   var el = document.getElementById('spark');
   /* Le SVG ne contient que des nombres calculés, pas de données texte utilisateur.
      On peut utiliser innerHTML ici car toutes les valeurs sont numériques (toFixed). */
-  if (!trend || trend.length < 2) {
-    el.innerHTML = '<text x="300" y="80" text-anchor="middle" fill="#929299" font-size="12">Données insuffisantes</text>';
+  if (!trend || trend.length === 0) {
+    el.innerHTML = '<text x="300" y="80" text-anchor="middle" fill="#929299" font-size="12">Aucune note sur les 30 derniers jours</text>';
     return;
   }
   var W = 600, H = 175, padLeft = 25, padRight = 10, padTop = 10, padBottom = 30, n = trend.length;
   var pts = trend.map(function(t) { return t.avg; });
-  function x(i) { return padLeft + i * (W - padLeft - padRight) / (n - 1); }
+  function x(i) { return n === 1 ? (padLeft + W - padRight) / 2 : padLeft + i * (W - padLeft - padRight) / (n - 1); }
   function y(v) { return H - padBottom - (v - 1) / 4 * (H - padTop - padBottom); }
   function dateLabel(iso) {
     var parts = String(iso || '').split('-');
     return parts.length === 3 ? parts[2] + '/' + parts[1] : '';
   }
-  var line = pts.map(function(v, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
+  /* Avec une seule journée, afficher un repère horizontal centré plutôt que de
+     prétendre qu'il n'y a pas de données ou de calculer x / (n - 1). */
+  var line = n === 1
+    ? 'M' + (x(0) - 24).toFixed(1) + ' ' + y(pts[0]).toFixed(1) + ' L' + (x(0) + 24).toFixed(1) + ' ' + y(pts[0]).toFixed(1)
+    : pts.map(function(v, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
   var area = line + ' L' + x(n - 1).toFixed(1) + ' ' + (H - padBottom) + ' L' + x(0).toFixed(1) + ' ' + (H - padBottom) + ' Z';
   var dots = pts.map(function(v, i) {
-    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="3" fill="#000091"><title>' + dateLabel(trend[i].date) + ' : ' + Number(v).toFixed(2) + '/5 (' + Number(trend[i].count) + ' note(s))</title></circle>';
+    return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="' + (n === 1 ? '5' : '3') + '" fill="#000091"><title>' + dateLabel(trend[i].date) + ' : ' + Number(v).toFixed(2) + '/5 (' + Number(trend[i].count) + ' note(s))</title></circle>';
   }).join('');
   var grid = '';
   [1, 2, 3, 4, 5].forEach(function(v) {
@@ -292,7 +296,7 @@ function renderSpark(trend) {
   });
   var labelIndexes = [0, Math.floor((n - 1) / 2), n - 1].filter(function(v, i, a) { return a.indexOf(v) === i; });
   var labels = labelIndexes.map(function(i) {
-    var anchor = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
+    var anchor = n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
     return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + anchor + '" fill="#929299" font-size="10">' + dateLabel(trend[i].date) + '</text>';
   }).join('');
   el.innerHTML =
@@ -301,7 +305,7 @@ function renderSpark(trend) {
     '<stop offset="1" stop-color="#000091" stop-opacity="0"/>' +
     '</linearGradient></defs>' +
     grid +
-    '<path d="' + area + '" fill="url(#g)"/>' +
+    (n > 1 ? '<path d="' + area + '" fill="url(#g)"/>' : '') +
     '<path d="' + line + '" fill="none" stroke="#000091" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
     dots + labels;
 }
