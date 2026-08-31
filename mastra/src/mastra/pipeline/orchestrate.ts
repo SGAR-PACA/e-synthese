@@ -10,6 +10,8 @@ import { rechercherMultiple } from './retrieval.js';
 import { construirePromptRedaction } from './writer.js';
 import type { RagChunk } from '../../lib/db.js';
 import { getConfig, type AppConfig } from '../../lib/config.js';
+import { ensureSourcesBlock } from '../../lib/sources-linker.js';
+import { isRefusal } from '../scorers/refusal.js';
 
 // Filet de sécurité : retire les marqueurs de citation 【...】 que certains modèles émettent
 // malgré l'interdiction dans le prompt système (le format « Source N » est imposé en bloc final).
@@ -46,6 +48,7 @@ export async function runRagCore(args: {
     [{ role: 'user', content: construirePromptRedaction(args.question, chunks) }],
     { modelSettings: args.writerSettings },
   );
-  const answer = stripCitationBrackets(result.text ?? '');
+  const clean = stripCitationBrackets(result.text ?? '');
+  const answer = isRefusal(clean) ? clean : ensureSourcesBlock(clean, chunks);
   return { plan, chunks, answer, finishReason: result.finishReason || 'stop', usage: result.usage };
 }

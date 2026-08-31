@@ -71,6 +71,8 @@ for (let attempt = 0; attempt < 30; attempt++) {
 }
 assert.equal(restored.payload.status, 'completed', restored.payload.error || JSON.stringify(restored.payload));
 assert.match(restored.payload.result.answer, /42 M€/);
+assert.match(restored.payload.result.answer, /\*\*Sources :\*\*/);
+assert.match(restored.payload.result.answer, /validation-e2e\.pdf/);
 assert.equal(restored.payload.result.scores.length, 4);
 
 const history = await json('/admin/test-pipeline?limit=30', { headers: { cookie } });

@@ -55,6 +55,25 @@ export function injectSourceLinks(
 // --- Streaming : sépare le corps (émis au fil de l'eau) du bloc Sources (réécrit en fin) ---
 export const SOURCES_MARKER = '\n\n**Sources';
 
+export function buildSourcesBlock(usedChunks: RagChunk[]): string {
+  const names: string[] = [];
+  for (const chunk of usedChunks) {
+    const name = chunk.name?.trim();
+    if (name && !names.includes(name)) names.push(name);
+  }
+  if (names.length === 0) return '';
+  return `**Sources :**\n${names.map((name, index) => `- Source ${index + 1} : *${name}*`).join('\n')}`;
+}
+
+// Filet déterministe : le prompt demande toujours le bloc Sources, mais un LLM
+// peut l'omettre. Les passages retenus par le pipeline sont connus, donc on
+// ajoute un bloc minimal si nécessaire au lieu de livrer une réponse non sourcée.
+export function ensureSourcesBlock(answer: string, usedChunks: RagChunk[]): string {
+  if (/(?:^|\n\n)\*\*Sources\s*:\*\*(?:\n|$)/.test(answer)) return answer;
+  const block = buildSourcesBlock(usedChunks);
+  return block ? `${answer.trimEnd()}\n\n${block}` : answer;
+}
+
 export function createSourcesStreamSplitter(): {
   push(delta: string): string;
   finalize(rewrite: (block: string) => string): string;

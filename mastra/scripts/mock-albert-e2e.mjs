@@ -19,6 +19,32 @@ function completion(content, model = 'mock-model') {
   };
 }
 
+function streamCompletion(res, content, model = 'mock-model') {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  const middle = Math.ceil(content.length / 2);
+  for (const delta of [content.slice(0, middle), content.slice(middle)]) {
+    res.write(`data: ${JSON.stringify({
+      id: `mock-${requests.length}`,
+      object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
+    })}\n\n`);
+  }
+  res.write(`data: ${JSON.stringify({
+    id: `mock-${requests.length}`,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+  })}\n\n`);
+  res.end('data: [DONE]\n\n');
+}
+
 createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -72,8 +98,17 @@ createServer(async (req, res) => {
     // Rend visible la différence entre une requête HTTP synchrone et le job
     // détaché : la création du test doit répondre avant cette temporisation.
     await new Promise((resolve) => setTimeout(resolve, 2500));
+    // Le modèle omet volontairement le bloc Sources : l'E2E vérifie que le
+    // pipeline le restaure de façon déterministe depuis les chunks retenus.
+    if (body?.stream) {
+      return streamCompletion(
+        res,
+        'Le budget de validation est de **42 M€**.',
+        body?.model,
+      );
+    }
     return send(res, 200, completion(
-      'Le budget de validation est de **42 M€**.\n\n**Sources :**\n- Source 1 : *validation-e2e.pdf*',
+      'Le budget de validation est de **42 M€**.',
       body?.model,
     ));
   }
