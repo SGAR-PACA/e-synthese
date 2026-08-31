@@ -1,0 +1,13 @@
+--- a/conversations/settings.py
++++ b/conversations/settings.py
+@@ -334,6 +334,10 @@
+         "django.middleware.common.CommonMiddleware",
+         "django.middleware.csrf.CsrfViewMiddleware",
+         "django.contrib.auth.middleware.AuthenticationMiddleware",
++        # E-Synthèse : renouvelle l'access token court avec le refresh token
++        # chiffré en session. Sans ce middleware, le token transmis à Mastra
++        # finit par expirer alors que la session Django est encore ouverte.
++        "lasuite.oidc_login.middleware.RefreshOIDCAccessToken",
+         "posthog.integrations.django.PosthogContextMiddleware",
+         "django.contrib.messages.middleware.MessageMiddleware",
+         "dockerflow.django.middleware.DockerflowMiddleware",

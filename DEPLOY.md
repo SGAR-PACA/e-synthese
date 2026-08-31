@@ -165,8 +165,9 @@ Dans **Application → Environment** : coller chaque variable de `.env.example.p
 | `EMAIL_PASSWORD` | mot de passe SMTP |
 | `LLM_MODEL` | `albert-large` (par défaut) |
 
-La session Conversations est limitée à 30 minutes par défaut (`CONVERSATIONS_SESSION_COOKIE_AGE=1800`),
-alignée sur le timeout SSO Keycloak ; la visionneuse utilise une session opaque révocable de 15 minutes.
+La session Conversations et le SSO Keycloak durent 10 heures par défaut
+(`CONVERSATIONS_SESSION_COOKIE_AGE=36000`). La visionneuse utilise la même durée ;
+la déconnexion explicite et les notifications de logout Keycloak restent immédiates.
 Le service `keycloak-provision-mastra-sources` crée ou met à jour automatiquement le client confidentiel
 `mastra-sources` et son URL de logout back-channel.
 

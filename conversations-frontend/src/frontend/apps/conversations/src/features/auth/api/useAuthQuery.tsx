@@ -33,7 +33,10 @@ export function useAuthQuery(
   return useQuery<User, APIError, User>({
     queryKey: [KEY_AUTH],
     queryFn: getMe,
-    staleTime: 1000 * 60 * 15, // 15 minutes
+    // La session serveur et le SSO durent une journée de travail. Évite le
+    // recontrôle au retour sur l'onglet toutes les 15 minutes ; les 401 des
+    // actions authentifiées et le logout explicite restent traités immédiatement.
+    staleTime: 1000 * 60 * 60 * 10,
     ...queryConfig,
   });
 }

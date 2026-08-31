@@ -43,6 +43,7 @@ import { useAprilFools } from '../hooks/useAprilFools';
 import { useChatPreferencesStore } from '../stores/useChatPreferencesStore';
 import { usePendingChatStore } from '../stores/usePendingChatStore';
 import { useScrollStore } from '../stores/useScrollStore';
+import { isAwaitingFirstAssistantOutput } from '../utils/chatLoading';
 
 const PROVIDER_ERROR_CODES = new Set<ChatErrorType>([
   'model_unavailable',
@@ -350,6 +351,13 @@ export const Chat = ({
   const lastAssistantMessageIndex = useMemo(() => {
     return messages.findLastIndex((msg) => msg.role === 'assistant');
   }, [messages]);
+
+  // Un stream HTTP peut être ouvert bien avant son premier token. Pendant ce
+  // délai, `status` vaut déjà "streaming" mais aucun rendu assistant n'existe.
+  const isWaitingForAssistant = useMemo(
+    () => isAwaitingFirstAssistantOutput(messages, status),
+    [messages, status],
+  );
 
   // Memoize whether this is the first conversation (2 or fewer messages)
   const isFirstConversationMessage = useMemo(() => {
@@ -928,9 +936,7 @@ export const Chat = ({
             </Text>
           </Box>
         )}
-        {!aprilFools.isActive &&
-        ((status !== 'ready' && status !== 'streaming' && status !== 'error') ||
-          isUploadingFiles) ? (
+        {!aprilFools.isActive && (isWaitingForAssistant || isUploadingFiles) ? (
           <Box
             $direction="row"
             $align="start"

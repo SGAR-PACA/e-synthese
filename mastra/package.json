@@ -8,6 +8,9 @@
     "build": "mastra build",
     "start": "mastra start",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:e2e:admin": "node scripts/verify-admin-e2e.mjs",
+    "test:e2e:restart": "node scripts/verify-admin-restart.mjs",
+    "test:e2e:ratings": "node scripts/verify-ratings-e2e.mjs",
     "vendor-pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "keywords": [],

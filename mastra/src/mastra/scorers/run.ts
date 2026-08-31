@@ -12,7 +12,7 @@ import {
   type ScoreResult,
 } from './index.js';
 import { isRefusal } from './refusal.js';
-import { resolveInstructions } from '../agents/rag-agent.js';
+import { resolveRagSystemPrompt } from '../pipeline/system-prompt.js';
 import * as albert from '../../lib/albert-client.js';
 import { getConfig } from '../../lib/config.js';
 import { withPriority } from '../../lib/albert-limiter.js';
@@ -189,7 +189,7 @@ async function scoreRunInner(args: ScoreRunArgs): Promise<ScoreRunResult> {
   const wide = refusal || !config.evalWideSearch ? [] : await wideSearch(args.question, args.allowedCollections);
 
   // 4. Un SEUL appel juge pour toutes les métriques attendues.
-  const instructions = await resolveInstructions();
+  const instructions = await resolveRagSystemPrompt();
   const input = {
     question: args.question,
     answer: args.answer,

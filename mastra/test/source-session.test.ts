@@ -8,9 +8,31 @@ import {
   makeSourceSessionCookie,
   newSourceSessionToken,
   readSourceSessionToken,
+  sourceSessionTtlMs,
 } from '../src/lib/source-session.js';
 
 const KEY = 'rp-cookie-key-32-octets-aaaaaaaaaa';
+
+test('session visionneuse : 10 heures minimum, configurable jusqu\'à 24 heures', () => {
+  const previous = process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS;
+  try {
+    delete process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS;
+    assert.equal(sourceSessionTtlMs(), 10 * 60 * 60 * 1000);
+
+    // Ancienne valeur documentée : elle ne doit plus recréer le logout à 15 min.
+    process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS = '900';
+    assert.equal(sourceSessionTtlMs(), 10 * 60 * 60 * 1000);
+
+    process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS = '43200';
+    assert.equal(sourceSessionTtlMs(), 12 * 60 * 60 * 1000);
+
+    process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS = '172800';
+    assert.equal(sourceSessionTtlMs(), 24 * 60 * 60 * 1000);
+  } finally {
+    if (previous === undefined) delete process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS;
+    else process.env.MASTRA_SOURCE_SESSION_TTL_SECONDS = previous;
+  }
+});
 
 test('sign/verify : round-trip', () => {
   const v = signCookieValue({ sub: 'user-1', exp: 9_000_000_000_000 }, KEY);

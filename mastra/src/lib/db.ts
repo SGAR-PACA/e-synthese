@@ -134,6 +134,19 @@ export async function applySchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_rag_scores_run    ON rag_scores(run_id);
     CREATE INDEX IF NOT EXISTS idx_rag_scores_metric ON rag_scores(metric);
     CREATE INDEX IF NOT EXISTS idx_rag_runs_created  ON rag_runs(created_at);
+    CREATE TABLE IF NOT EXISTS pipeline_test_runs (
+      id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id      INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      query        TEXT NOT NULL,
+      with_judge   BOOLEAN NOT NULL DEFAULT false,
+      status       TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+      result       JSONB,
+      error        TEXT,
+      created_at   TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      updated_at   TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    );
+    CREATE INDEX IF NOT EXISTS idx_pipeline_test_runs_user_created
+      ON pipeline_test_runs(user_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS document_files (
       id                  TEXT PRIMARY KEY,
       albert_document_id  TEXT,
@@ -195,8 +208,24 @@ export async function applySchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_user_ratings_created ON user_ratings(created_at);
   `;
-  await getPool().query(sql);
-  schemaApplied = true;
+  // `CREATE TABLE IF NOT EXISTS` n'est pas sûr face à deux processus qui créent
+  // simultanément les mêmes séquences implicites (IDENTITY). Le verrou advisory
+  // sérialise la migration entre workers de tests et replicas Mastra partageant
+  // la même base, puis est libéré avec la connexion même en cas d'échec.
+  const schemaLockId = 1_163_088_456;
+  const client = await getPool().connect();
+  let locked = false;
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [schemaLockId]);
+    locked = true;
+    await client.query(sql);
+    schemaApplied = true;
+  } finally {
+    if (locked) {
+      await client.query('SELECT pg_advisory_unlock($1)', [schemaLockId]).catch(() => undefined);
+    }
+    client.release();
+  }
 }
 
 export async function query<T extends Record<string, any> = any>(sql: string, params?: any[]): Promise<T[]> {
@@ -782,6 +811,68 @@ export async function getScores(f: ScoreFilters): Promise<{ count: number; items
   return { count, items };
 }
 
+// ---- Banc de test pipeline persistant ----
+export type PipelineTestStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface PipelineTestRun {
+  id: number;
+  user_id: number;
+  query: string;
+  with_judge: boolean;
+  status: PipelineTestStatus;
+  result: Record<string, any> | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createPipelineTestRun(input: {
+  userId: number;
+  query: string;
+  withJudge: boolean;
+}): Promise<PipelineTestRun> {
+  const rows = await query<PipelineTestRun>(
+    `INSERT INTO pipeline_test_runs (user_id, query, with_judge, status)
+     VALUES ($1, $2, $3, 'queued') RETURNING *`,
+    [input.userId, input.query, input.withJudge],
+  );
+  return rows[0];
+}
+
+export async function updatePipelineTestRun(
+  id: number,
+  status: PipelineTestStatus,
+  result: Record<string, any> | null = null,
+  error: string | null = null,
+): Promise<void> {
+  await run(
+    `UPDATE pipeline_test_runs
+        SET status = $2, result = $3::jsonb, error = $4, updated_at = ${NOW_ISO_SQL}
+      WHERE id = $1`,
+    [id, status, result == null ? null : JSON.stringify(result), error],
+  );
+}
+
+export async function getPipelineTestRun(id: number, userId: number): Promise<PipelineTestRun | null> {
+  const rows = await query<PipelineTestRun>(
+    `SELECT * FROM pipeline_test_runs WHERE id = $1 AND user_id = $2`,
+    [id, userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function listPipelineTestRuns(userId: number, limit = 30): Promise<PipelineTestRun[]> {
+  const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 30;
+  return query<PipelineTestRun>(
+    `SELECT id, user_id, query, with_judge, status, NULL::jsonb AS result,
+            error, created_at, updated_at
+       FROM pipeline_test_runs
+      WHERE user_id = $1
+      ORDER BY id DESC LIMIT $2`,
+    [userId, boundedLimit],
+  );
+}
+
 // ---- Fichiers documents (visionneuse de sources) ----
 export type DocumentFileStatus = 'processing' | 'ready' | 'failed';
 
@@ -1110,7 +1201,8 @@ export async function getRatingStats(): Promise<{ count: number; average: number
 
 // Calcule les KPIs agrégés pour le dashboard admin de notation.
 // distribution = tableau de 5 entiers (index 0 = 1★ … index 4 = 5★).
-// trend = moyenne et nombre de notes par jour, trié par date croissante.
+// trend = moyenne et nombre de notes par jour sur les 30 derniers jours,
+// trié par date croissante.
 export async function getRatingDashboardStats(): Promise<{
   count: number; average: number; pct_high: number; week: number;
   distribution: number[]; trend: { date: string; avg: number; count: number }[];
@@ -1129,7 +1221,9 @@ export async function getRatingDashboardStats(): Promise<{
   for (const d of dist) if (d.rating >= 1 && d.rating <= 5) distribution[d.rating - 1] = Number(d.n);
   const tr = await query<{ d: string; avg: string; n: string }>(
     `SELECT substring(created_at for 10) AS d, AVG(rating)::float AS avg, COUNT(*)::int AS n
-       FROM user_ratings GROUP BY d ORDER BY d`,
+       FROM user_ratings
+      WHERE created_at >= to_char((now() - interval '30 days') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      GROUP BY d ORDER BY d`,
   );
   const a = agg[0] ?? { count: 0, average: 0, high: 0, week: 0 } as any;
   const count = Number(a.count) || 0;

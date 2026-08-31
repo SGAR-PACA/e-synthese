@@ -6,13 +6,13 @@ import { useTranslation } from 'react-i18next';
 import { Box, Icon, Loader, Text } from '@/components';
 import { AttachmentList } from '@/features/chat/components/AttachmentList';
 import { FeedbackButtons } from '@/features/chat/components/FeedbackButtons';
-import { RatingWidget } from '@/features/rating/components/RatingWidget';
 import {
   CompletedMarkdownBlock,
   RawTextBlock,
 } from '@/features/chat/components/MessageBlock';
 import { SourceItemList } from '@/features/chat/components/SourceItemList';
 import { ToolInvocationItem } from '@/features/chat/components/ToolInvocationItem';
+import { RatingWidget } from '@/features/rating/components/RatingWidget';
 
 // Memoized blocks list to prevent parent re-renders from causing block remounts
 const BlocksList = React.memo(

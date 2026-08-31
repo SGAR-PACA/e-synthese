@@ -28,7 +28,7 @@ export const UserInfo = () => {
       user={{ email: user.email, full_name: user.full_name }}
       logout={gotoLogout}
       actions={<LanguagePicker />}
-      termOfServiceUrl="https://docs.numerique.gouv.fr/docs/7b118d32-7f3c-4226-a3d0-92d2f33c5f0a/"
+      termOfServiceUrl="https://docs.numerique.gouv.fr/docs/0fce337e-fa8d-42ba-a4b9-9b4fbb96b20a/"
     />
   );
 };
