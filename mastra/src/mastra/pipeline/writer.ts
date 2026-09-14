@@ -1,6 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import { getConfig } from '../../lib/config.js';
 import type { RagChunk } from '../../lib/db.js';
+import { normaliserNom } from '../../lib/sources-linker.js';
 import { resolveRagSystemPrompt } from './system-prompt.js';
 
 export const writerAgent = new Agent({
@@ -19,7 +20,7 @@ export function construirePromptRedaction(question: string, chunks: RagChunk[]):
     return `QUESTION : ${question}\n\nAucun passage pertinent n'a été trouvé dans la base documentaire. Réponds honnêtement que tu n'as pas trouvé d'information sur ce point dans les documents disponibles, sans inventer.`;
   }
   const passages = chunks
-    .map((c, i) => `--- Passage ${i + 1} (source : ${c.name}) ---\n${c.content}`)
+    .map((c, i) => `--- Passage ${i + 1} (source : ${normaliserNom(c.name)}) ---\n${c.content}`)
     .join('\n\n');
   return `QUESTION : ${question}\n\nPASSAGES :\n${passages}`;
 }

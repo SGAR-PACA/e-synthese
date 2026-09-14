@@ -15,7 +15,7 @@ import type { AppConfig } from '../lib/config.js';
 import type { RagChunk } from '../lib/db.js';
 import { getDocumentFilesByFilename, getDocumentFileByAlbertId, insertRagRun } from '../lib/db.js';
 import { pickDocumentFile } from '../lib/source-resolve.js';
-import { buildSourcesBlock, injectSourceLinks, createSourcesStreamSplitter, SOURCES_MARKER, type SignFn } from '../lib/sources-linker.js';
+import { buildSourcesBlock, injectSourceLinks, createSourcesStreamSplitter, findSourcesBlockStart, type SignFn } from '../lib/sources-linker.js';
 import { isRefusal } from '../mastra/scorers/refusal.js';
 import { signSourceToken } from '../lib/source-token.js';
 
@@ -253,7 +253,7 @@ async function remapDocumentIds(
 
 // Retire le bloc « Sources » final d'une réponse (tout ce qui suit le marqueur).
 function stripSourcesBlock(text: string): string {
-  const idx = text.indexOf(SOURCES_MARKER);
+  const idx = findSourcesBlockStart(text);
   return idx >= 0 ? text.slice(0, idx).trimEnd() : text;
 }
 
