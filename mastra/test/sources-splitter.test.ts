@@ -50,6 +50,33 @@ test('faux positif : "**Sources officielles**" en milieu de corps ne déclenche 
   assert.equal(emitted, body);
 });
 
+// Variantes d'en-tête écrites par l'IA : sans détection, les lignes partent brutes (non cliquables)
+// et le filet ajoute un second bloc.
+for (const [label, heading] of [
+  ['un seul saut de ligne', '\n**Sources :**'],
+  ['sans gras', '\n\nSources :'],
+  ['titre Markdown', '\n\n### Sources'],
+  ['gras sans deux-points', '\n\n**Sources**'],
+  ['deux-points hors du gras', '\n\n**Sources** :'],
+]) {
+  test(`streaming : en-tête « ${label} » détecté, bloc réécrit`, () => {
+    const s = createSourcesStreamSplitter();
+    let emitted = '';
+    for (const ch of `Corps.${heading}\n- Source 1 : *A.pdf*`) emitted += s.push(ch); // delta par caractère
+    emitted += s.finalize((block) => '[[' + block + ']]');
+    assert.equal(s.sawSources, true);
+    assert.doesNotMatch(emitted.split('[[')[0], /Source 1/);
+    assert.match(emitted, /\[\[.*Source 1.*\]\]/s);
+  });
+}
+
+test('streaming : une ligne de corps commençant par « Sources » est émise sans attendre', () => {
+  const s = createSourcesStreamSplitter();
+  const emitted = s.push('Intro.\nSources de financement multiples');
+  assert.equal(emitted, 'Intro.\nSources de financement multiples'.slice(0, emitted.length));
+  assert.ok(emitted.includes('Sources de fin'), `émis : ${JSON.stringify(emitted)}`);
+});
+
 test('faux positif : seul le vrai bloc final "\\n\\n**Sources :**" déclenche le splitter', () => {
   const s = createSourcesStreamSplitter();
   let emitted = '';
