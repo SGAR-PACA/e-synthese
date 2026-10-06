@@ -5,7 +5,7 @@
 .env.*.local
 mastra/.env
 
-# Bases de données SQLite (Mastra) — uniquement utiles en test prod local
+# Anciennes bases SQLite locales de Mastra
 mastra/data.db
 mastra/data.db-shm
 mastra/data.db-wal
@@ -23,13 +23,6 @@ data/
 .idea/
 *.log
 __pycache__/
-
-# Specs/plans de travail (locaux) + scratch d'orchestration — non versionnés
-docs/specs/
-docs/plans/
-.superpowers/
-.playwright-mcp/
-docs/mastra-tuning-procedure.md
 
 # Banc de test : questions/réponses attendues et résultats — JAMAIS commités
 scripts/bench/questions.json

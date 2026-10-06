@@ -1,22 +1,15 @@
 name: e-synthese-prod
 
 # =============================================================================
-# Configuration PRODUCTION pour Dokploy (OVH/Scaleway)
+# E-Synthèse : pile de production, déployée par Dokploy.
 #
-# Différences clés vs E-synthese-final-dev :
-#  - Pas de ports exposés sauf via Traefik (géré par Dokploy)
-#  - restart: always partout
-#  - Mastra : image GHCR pinnée par digest (TODO une fois la CI publiée)
-#  - Django : DJANGO_CONFIGURATION=Production (pas de local_settings.py)
-#  - llm.json rendu via envsubst au démarrage (depuis llm.json.tpl)
-#  - Named volumes durables pour Postgres / Mastra / Keycloak / MinIO
+# Un seul domaine (DOMAIN_FRONT), routé par le Traefik de Dokploy :
+#   /auth          → keycloak
+#   /admin, /v1    → mastra
+#   /              → frontend-development (qui relaie /api vers app-dev)
 #
-# Variables d'env attendues (voir .env.example.prod) :
-#  DOMAIN_FRONT (domaine unique : front /, Keycloak /auth, admin Mastra /admin),
-#  ALBERT_API_KEY, PROXY_API_KEY,
-#  ENCRYPTION_KEY, DJANGO_SECRET_KEY, OIDC_RP_CLIENT_SECRET,
-#  POSTGRES_PASSWORD, KC_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD,
-#  AWS_S3_SECRET_ACCESS_KEY, EMAIL_HOST, EMAIL_USER, EMAIL_PASSWORD
+# Variables : voir .env.example.prod et docs/variables-environnement.md.
+# Architecture : voir docs/architecture.md.
 # =============================================================================
 
 services:
